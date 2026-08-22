@@ -24,6 +24,17 @@ export interface FighterState {
   lastDamageTaken: number;
 }
 
+export interface ProjectileState {
+  id: number;
+  source: PlayerId;
+  target: PlayerId;
+  style: CombatStyle;
+  from: Tile;
+  to: Tile;
+  launchedTick: number;
+  impactTick: number;
+}
+
 export interface CombatEvent {
   id: number;
   tick: number;
@@ -35,6 +46,7 @@ export interface WorldState {
   tick: number;
   player: FighterState;
   opponent: FighterState;
+  projectiles: ProjectileState[];
   events: CombatEvent[];
   winner: PlayerId | null;
 }
