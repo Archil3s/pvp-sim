@@ -13,17 +13,34 @@ Build a browser-based OSRS-inspired PvP training simulator. It is a simulator on
 - True-tile coordinates are integer grid tiles. Rendering may interpolate visually between them.
 - New mechanics should emit combat events that can later feed replays, debugging and AI training.
 - Keep prototype values clearly identified until verified against OSRS mechanics.
+- Alter (BSD 2-Clause) is an approved behavioural/architectural reference. Preserve attribution in `THIRD_PARTY_NOTICES.md` when adapting its implementation details.
 
 ## Current milestone
-Prototype 0.2 includes movement, basic equipment switching, prayers, food, deterministic attacks, an attacking opponent and a combat event log.
+Prototype 0.3 includes:
+- queued one-tile movement steps,
+- data-driven weapon attack speed/range,
+- persistent attack intent with movement into weapon range,
+- delayed ranged/magic impacts,
+- projectile state exposed by the simulation,
+- deterministic attacks and opponent attacks,
+- equipment switching, prayers, food and combat event logging.
+
+## Known simplifications
+- Route building is straight-line and has no collision map yet.
+- Running/two-step movement is not implemented yet.
+- Accuracy/max-hit values are still placeholders.
+- Projectile line-of-sight is not implemented yet.
+- Prayer timing/damage snapshot semantics must be verified against current OSRS PvP behaviour.
+- The opponent AI is a deterministic test opponent, not a model of real PK behaviour.
 
 ## Next priorities
-1. Split item/combat definitions out of GameEngine.ts into data modules.
-2. Add projectile/impact timing instead of immediate ranged damage.
-3. Add attack range and adjacency checks.
-4. Add a proper replay frame/event recorder.
-5. Add unit tests for tick timing and cooldowns.
-6. Replace placeholder fighter geometry with legally usable original/open assets.
+1. Add unit tests for 3-tick/5-tick attack cadence, attack range and delayed impacts.
+2. Add collision flags and line-of-sight validation.
+3. Add walk/run movement semantics and routefinding.
+4. Port and verify ranged accuracy/max-hit formulas and equipment bonuses.
+5. Add a proper replay frame/event recorder.
+6. Add projectile rendering based only on `WorldState.projectiles`.
+7. Replace placeholder fighter geometry with legally usable original/open assets.
 
 ## Quality bar
 - `npm run build` must pass before merging.
