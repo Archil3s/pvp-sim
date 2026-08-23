@@ -1,48 +1,22 @@
-# PvP Sim — Codex Instructions
+# Codex Supervisor Dashboard
 
-## Goal
-Build a browser-based OSRS-inspired PvP training simulator. It is a simulator only and must not connect to or automate the live OSRS client.
+This repository is the Cloudflare-hosted viewer for the local DD Skiller Codex supervisor. It no longer contains the PvP simulator.
 
-## Architecture rules
-- The simulation engine is authoritative. React and Three.js only display and submit commands.
-- Game logic runs on deterministic 600 ms ticks.
-- Never put combat rules inside React components or Three.js objects.
-- All player/AI actions must use the same command interface.
-- Prefer data-driven weapon/item/prayer definitions over item-specific conditionals.
-- Random combat outcomes must come from seeded RNG so scenarios can be replayed.
-- True-tile coordinates are integer grid tiles. Rendering may interpolate visually between them.
-- New mechanics should emit combat events that can later feed replays, debugging and AI training.
-- Keep prototype values clearly identified until verified against OSRS mechanics.
-- Alter (BSD 2-Clause) is an approved behavioural/architectural reference. Preserve attribution in `THIRD_PARTY_NOTICES.md` when adapting its implementation details.
+## Architecture
+- `src/` is the React/Vite viewer.
+- `worker/index.js` is the Cloudflare Worker API.
+- `SupervisorHub` is a Durable Object used to hold the latest private supervisor telemetry for each session and fan it out over WebSockets.
+- `wrangler.jsonc` deploys the Worker and `dist/` static assets as one Cloudflare unit.
 
-## Current milestone
-Prototype 0.3 includes:
-- queued one-tile movement steps,
-- data-driven weapon attack speed/range,
-- persistent attack intent with movement into weapon range,
-- delayed ranged/magic impacts,
-- projectile state exposed by the simulation,
-- deterministic attacks and opponent attacks,
-- equipment switching, prayers, food and combat event logging.
+## Security
+- Session creation returns separate random write and viewer tokens.
+- The Windows supervisor keeps the write token locally and uses it only for telemetry POSTs.
+- The browser viewer needs the session ID plus viewer token.
+- Never commit live session tokens, GitHub tokens, OmniRoute keys, or other secrets.
 
-## Known simplifications
-- Route building is straight-line and has no collision map yet.
-- Running/two-step movement is not implemented yet.
-- Accuracy/max-hit values are still placeholders.
-- Projectile line-of-sight is not implemented yet.
-- Prayer timing/damage snapshot semantics must be verified against current OSRS PvP behaviour.
-- The opponent AI is a deterministic test opponent, not a model of real PK behaviour.
-
-## Next priorities
-1. Add unit tests for 3-tick/5-tick attack cadence, attack range and delayed impacts.
-2. Add collision flags and line-of-sight validation.
-3. Add walk/run movement semantics and routefinding.
-4. Port and verify ranged accuracy/max-hit formulas and equipment bonuses.
-5. Add a proper replay frame/event recorder.
-6. Add projectile rendering based only on `WorldState.projectiles`.
-7. Replace placeholder fighter geometry with legally usable original/open assets.
-
-## Quality bar
-- `npm run build` must pass before merging.
-- Preserve deterministic outcomes for the same seed and command sequence.
-- Do not silently guess OSRS mechanics. Mark uncertain values as placeholders and isolate them for later verification.
+## Development rules
+- Keep the dashboard useful on mobile and desktop.
+- Preserve WebSocket live updates and polling fallback.
+- Keep the API backwards-compatible with supervisor telemetry payloads when possible.
+- Do not reintroduce PvP simulator/Three.js code unless the repository purpose is explicitly changed again.
+- `npm run build` must pass before shipping frontend changes.
