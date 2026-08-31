@@ -74,6 +74,14 @@ import {
   syncInvoicePeriodToDrive,
   syncSupportNoteToDrive,
 } from './googleDrive';
+import {
+  GOLD_STANDARD_LIMITS,
+  STRUCTURED_SUPPORT_NOTE_TEMPLATE,
+  goldStandardTemplateContent,
+  goldStandardTemplatePlainText,
+  insertSupportNoteTemplate,
+  supportNoteHasEnteredContent,
+} from './supportNoteTemplate';
 
 const TEMPORARY_LOGIN_BYPASS = true;
 
@@ -82,25 +90,7 @@ function todayStart(): number {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 }
 
-const SUPPORT_NOTE_TEMPLATE = [
-  'Attendance',
-  '',
-  'What happened',
-  '',
-  'Work/task completed',
-  '',
-  'Support given',
-  '',
-  'Issue/problem',
-  '',
-  'Outcome',
-  '',
-  'Next step',
-  '',
-  'Anything to follow up',
-  '',
-  'Referrals',
-].join('\n');
+const SUPPORT_NOTE_TEMPLATE = STRUCTURED_SUPPORT_NOTE_TEMPLATE;
 
 const SUPPORT_NOTE_HEADINGS = new Set([
   'attendance',
@@ -146,19 +136,142 @@ function supportNoteStatusLabel(status: SupportNoteStatus): string {
 }
 
 function hasSupportNoteContent(noteText: string): boolean {
-  const source = noteText.trim();
-  if (!source) return false;
+  return supportNoteHasEnteredContent(noteText);
+}
 
-  return source.split(/\r?\n/).some((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return false;
-    const normalized = trimmed
-      .replace(/\*/g, '')
-      .replace(/:$/g, '')
-      .trim()
-      .toLowerCase();
-    return !SUPPORT_NOTE_HEADINGS.has(normalized);
-  });
+function SupportNoteTemplateTools({
+  entry,
+  personName,
+  noteText,
+  onChange,
+}: {
+  entry: WorkEntry;
+  personName: string;
+  noteText: string;
+  onChange: (value: string) => void;
+}) {
+  const content = goldStandardTemplateContent(entry, personName, noteText);
+  const counts = content.wordCounts;
+  const [copyLabel, setCopyLabel] = useState('Copy formatted report');
+
+  const copyReport = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        goldStandardTemplatePlainText(entry, personName, noteText),
+      );
+      setCopyLabel('Copied');
+      window.setTimeout(() => setCopyLabel('Copy formatted report'), 1400);
+    } catch {
+      setCopyLabel('Copy failed');
+      window.setTimeout(() => setCopyLabel('Copy formatted report'), 1400);
+    }
+  };
+
+  const countRows = [
+    ['Main topic(s)', counts.mainTopics, GOLD_STANDARD_LIMITS.mainTopics],
+    ['Outcome(s)', counts.outcomes, GOLD_STANDARD_LIMITS.outcomes],
+    [
+      'Overall impression',
+      counts.overallImpression,
+      GOLD_STANDARD_LIMITS.overallImpression,
+    ],
+    ['Next actions', counts.nextActions, GOLD_STANDARD_LIMITS.nextActions],
+  ] as const;
+
+  return (
+    <div className="template-tools">
+      <div className="template-tools-heading">
+        <div>
+          <strong>Gold-standard Work template</strong>
+          <small>
+            Uses the same reporting structure as TEMPLATE.docx from the original app.
+          </small>
+        </div>
+        <span>MSD format</span>
+      </div>
+
+      <div className="template-preset-row">
+        <button
+          type="button"
+          className="secondary compact"
+          onClick={() => onChange(insertSupportNoteTemplate(noteText, 'structured'))}
+        >
+          Structured note
+        </button>
+        <button
+          type="button"
+          className="secondary compact"
+          onClick={() => onChange(insertSupportNoteTemplate(noteText, 'referrals'))}
+        >
+          + Referrals
+        </button>
+        <button
+          type="button"
+          className="secondary compact"
+          onClick={() => onChange(insertSupportNoteTemplate(noteText, 'safety'))}
+        >
+          + Safety concerns
+        </button>
+      </div>
+
+      <div className="template-word-grid">
+        {countRows.map(([label, count, limit]) => {
+          const over = count > limit;
+          const width = Math.min(100, (count / limit) * 100);
+          return (
+            <div className={over ? 'template-count over' : 'template-count'} key={label}>
+              <div>
+                <span>{label}</span>
+                <b>{count}/{limit} words</b>
+              </div>
+              <div className="template-count-track">
+                <i style={{ width: width + '%' }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <details className="template-preview">
+        <summary>Preview reporting template</summary>
+        <div className="template-preview-sheet">
+          <h3>Template for reporting of interactions with survivors.</h3>
+          <p>
+            This template is aimed at providing information in a format that meets
+            the requirements of the Ministry of Social Development.
+          </p>
+          <dl>
+            <div><dt>Geographical area.</dt><dd>Blenheim</dd></div>
+            <div><dt>Name of client.</dt><dd>{content.clientName}</dd></div>
+            <div><dt>Date:</dt><dd>{content.date}</dd></div>
+          </dl>
+          <section>
+            <h4>Date/time/length of interaction</h4>
+            <pre>{content.interactionDetails}</pre>
+          </section>
+          <section>
+            <h4>Main topic(s) <small>max. 200 words</small></h4>
+            <pre>{content.mainTopics || '—'}</pre>
+          </section>
+          <section>
+            <h4>Outcome(s) <small>max. 100 words</small></h4>
+            <pre>{content.outcomes || '—'}</pre>
+          </section>
+          <section>
+            <h4>Overall impression <small>max. 150 words</small></h4>
+            <pre>{content.overallImpression || '—'}</pre>
+          </section>
+          <section>
+            <h4>Next actions <small>max. 150 words</small></h4>
+            <pre>{content.nextActions || '—'}</pre>
+          </section>
+          <button type="button" className="secondary compact" onClick={() => void copyReport()}>
+            {copyLabel}
+          </button>
+        </div>
+      </details>
+    </div>
+  );
 }
 
 function StatCard({
@@ -1386,15 +1499,39 @@ function FinishActiveVisitModal({
             </label>
           </>
         ) : (
-          <label className="field">
-            <span>Support note breakdown</span>
-            <textarea
-              className="visit-closeout-note"
-              rows={18}
-              value={supportNote}
-              onChange={(event) => setSupportNote(event.target.value)}
+          <>
+            <SupportNoteTemplateTools
+              entry={{
+                ...activeVisit,
+                id: activeVisit.id,
+                mode: 'work',
+                clientId: null,
+                minutes: elapsedVisitMinutes(activeVisit.startedAt),
+                notes: activeVisit.notes,
+                supportNoteBreakdown: supportNote,
+                nextActions: [],
+                googleCalendarEntered: false,
+                importantText: false,
+                textContactDirection: 'received',
+                textReplyNeeded: false,
+                odometerEnd: null,
+                createdAt: activeVisit.startedAt,
+                updatedAt: activeVisit.updatedAt,
+              }}
+              personName={activeVisit.client}
+              noteText={supportNote}
+              onChange={setSupportNote}
             />
-          </label>
+            <label className="field">
+              <span>Support note breakdown</span>
+              <textarea
+                className="visit-closeout-note"
+                rows={18}
+                value={supportNote}
+                onChange={(event) => setSupportNote(event.target.value)}
+              />
+            </label>
+          </>
         )}
 
         <div className="visit-closeout-summary">
@@ -2093,10 +2230,44 @@ function QuickEntryScreen({
             <span>Notes</span>
             <textarea rows={7} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="One point per line. Keep it factual and concise." />
           </label>
-          <label className="field">
-            <span>Support note breakdown</span>
-            <textarea rows={7} value={supportNote} onChange={(event) => setSupportNote(event.target.value)} placeholder={SUPPORT_NOTE_TEMPLATE} />
-          </label>
+          <div className="manual-template-column">
+            <SupportNoteTemplateTools
+              entry={{
+                id: 'manual-preview',
+                mode,
+                clientId: null,
+                client: client.trim() || fallbackClient(),
+                type,
+                date,
+                startTime,
+                minutes,
+                notes: visitLines(notes),
+                supportNoteBreakdown: supportNote,
+                nextActions: [],
+                googleCalendarEntered: false,
+                importantText,
+                textContactDirection: direction,
+                textReplyNeeded: replyNeeded,
+                odometerStart:
+                  type === 'homeVisit' && odometerStart.trim()
+                    ? Number(odometerStart)
+                    : null,
+                odometerEnd:
+                  type === 'homeVisit' && odometerEnd.trim()
+                    ? Number(odometerEnd)
+                    : null,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              }}
+              personName={client.trim() || fallbackClient()}
+              noteText={supportNote}
+              onChange={setSupportNote}
+            />
+            <label className="field">
+              <span>Support note breakdown</span>
+              <textarea rows={9} value={supportNote} onChange={(event) => setSupportNote(event.target.value)} placeholder={SUPPORT_NOTE_TEMPLATE} />
+            </label>
+          </div>
         </div>
       </Panel>
 
@@ -2550,6 +2721,13 @@ function SupportNoteModal({
             ))}
           </div>
         </div>
+
+        <SupportNoteTemplateTools
+          entry={entry}
+          personName={personName}
+          noteText={noteText}
+          onChange={setNoteText}
+        />
 
         <label className="field support-note-editor">
           <span>Support worker note</span>

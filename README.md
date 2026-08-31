@@ -42,6 +42,10 @@ The pre-NMRNL state of this repository is preserved on:
 - Finished timed visits create normal Work entries, billable time, next actions and Calendar-ready records
 - Work dashboard parity with Today + Current Fortnight totals, admin health, quick actions and last-entry summary
 - Monthly Work summary with contact-type totals, unfinished-note/action counts and iOS Share Sheet support
+- Gold-standard TEMPLATE.docx reporting workflow from the original app, including MSD/Blenheim report structure and automatic entry metadata
+- Template word-limit guidance: Main topic 200, Outcome 100, Overall impression 150, Next actions 150
+- Reusable Structured Note, Referrals and Safety Concerns inserts in support-note, timed-visit and manual-entry flows
+- Google Drive support-note Docs now use the gold-standard reporting template instead of a generic note layout
 - Mobile + desktop navigation
 
 ## Temporary build access

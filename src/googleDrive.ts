@@ -11,6 +11,7 @@ import {
   type SupportNoteStatus,
   type WorkEntry,
 } from './model';
+import { goldStandardTemplatePlainText } from './supportNoteTemplate';
 
 type GoogleTokenResponse = {
   access_token?: string;
@@ -474,17 +475,11 @@ function supportNoteDocumentText(input: {
   status: SupportNoteStatus;
   noteText: string;
 }): string {
-  return [
-    'NMRNL Work Support Note',
-    '',
-    'Person: ' + (input.personName.trim() || input.entry.client),
-    'Date: ' + formatDate(input.entry.date),
-    'Start: ' + input.entry.startTime,
-    'Work type: ' + entryType(input.entry.type).label,
-    'Status: ' + input.status,
-    '',
-    input.noteText.trim(),
-  ].join('\n');
+  return goldStandardTemplatePlainText(
+    input.entry,
+    input.personName.trim() || input.entry.client,
+    input.noteText,
+  );
 }
 
 export async function syncSupportNoteToDrive(input: {
