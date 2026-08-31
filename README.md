@@ -68,6 +68,21 @@ See `cloudflare/README.md` for the one-time setup and required Cloudflare API to
 
 NMRNL no longer sends its own recovery email. Cloudflare Access is the email ownership check. After Cloudflare verifies `blenhiemmaleroom@gmail.com`, NMRNL can replace a lost Google Authenticator secret with a new QR code. There is no `RECOVERY_FROM_EMAIL` requirement.
 
+
+## GitHub production deployment
+
+NMRNL also deploys directly from GitHub Actions using Wrangler.
+
+The workflow:
+
+`.github/workflows/deploy-nmrnl.yml`
+
+runs on every push to `main` and can also be started manually from GitHub Actions. It builds the Vite application and runs `wrangler deploy` with the repository secrets `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`.
+
+This deployment path does **not** use the Cloudflare Workers Builds build token. Once this GitHub workflow deploys successfully, the old Cloudflare Git Builds integration can be disabled or disconnected to stop stale build-token failures.
+
+The Cloudflare API token used by GitHub must include **Workers Scripts: Edit** in addition to the Access permissions used by the Access configuration workflow.
+
 ## Cloudflare deployment name
 
 The application is NMRNL, but `wrangler.jsonc` temporarily retains the Worker deployment name `pvp-sim` because the existing Cloudflare Git-connected Worker still has that name. Cloudflare requires these names to match for Git builds.
