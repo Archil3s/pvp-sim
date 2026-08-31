@@ -2018,3 +2018,186 @@ button.danger-button {
     font-size: 30px;
   }
 }
+
+
+/* Single-account email recovery */
+
+.account-access-line {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #2e4d78;
+  background: #111e33;
+  border-radius: 13px;
+  padding: 9px 11px;
+  margin-bottom: 15px;
+}
+
+.account-access-line > span {
+  color: #7f94bf;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  font-weight: 850;
+}
+
+.account-access-line strong {
+  color: #dbe6ff;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-access-line b,
+.locked-email-card > b {
+  color: #77e4a2;
+  border: 1px solid #2e6b4d;
+  background: #11271d;
+  border-radius: 999px;
+  padding: 5px 7px;
+  font-size: 8px;
+  letter-spacing: .06em;
+}
+
+.email-recovery-button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  border: 1px solid #36486f;
+  border-radius: 14px;
+  background: #151e30;
+  color: #dce5fb;
+  padding: 11px 12px;
+  margin-top: 13px;
+}
+
+.email-recovery-button:hover {
+  border-color: #5a78b7;
+  background: #19263d;
+}
+
+.email-recovery-button > span:first-child {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #1d355c;
+  color: #91b8ff;
+}
+
+.email-recovery-button > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+.email-recovery-button strong {
+  font-size: 11px;
+}
+
+.email-recovery-button small {
+  color: #8094bf;
+  font-size: 9px;
+}
+
+.recovery-card {
+  width: min(100%, 600px);
+}
+
+.recovery-back {
+  border: 0;
+  background: transparent;
+  color: #8fb7ff;
+  padding: 0 0 16px;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.recovery-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.locked-email-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 11px;
+  align-items: center;
+  border: 1px solid #2d5f47;
+  background: #102219;
+  border-radius: 15px;
+  padding: 12px;
+}
+
+.locked-email-card.setup-account {
+  margin-bottom: 16px;
+}
+
+.locked-email-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #173d2a;
+  color: #75f1aa;
+  font-size: 17px;
+}
+
+.locked-email-card > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.locked-email-card small {
+  color: #79a18b;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  font-weight: 800;
+}
+
+.locked-email-card strong {
+  color: #dff7e8;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-email-card {
+  margin-bottom: 10px;
+}
+
+.panel-footnote {
+  color: #7588b2;
+  font-size: 10px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+@media (max-width: 520px) {
+  .account-access-line,
+  .locked-email-card {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .account-access-line > span:first-child {
+    display: none;
+  }
+
+  .account-access-line b,
+  .locked-email-card > b {
+    grid-column: 2;
+    width: fit-content;
+  }
+
+  .locked-email-icon {
+    width: 34px;
+    height: 34px;
+  }
+}

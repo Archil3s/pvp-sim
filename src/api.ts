@@ -2,6 +2,7 @@ import type {
   EntryDraft,
   GeneralAction,
   Mode,
+  EmailRecoveryChallenge,
   WorkspaceCredentials,
   WorkspaceSetupChallenge,
   WorkspaceState,
@@ -10,6 +11,8 @@ import type {
 const SESSION_KEY = 'nmrnl.auth-session.v2';
 const WORKSPACE_KEY = 'nmrnl.workspace-id.v2';
 const LEGACY_KEY = 'nmrnl.private-workspace.v1';
+
+export const NMRNL_ACCOUNT_EMAIL = 'blenhiemmaleroom@gmail.com';
 
 type LegacyCredentials = {
   workspaceId?: string;
@@ -200,6 +203,62 @@ export async function confirmAuthenticatorEnrollment(
   return {
     credentials: {
       workspaceId: credentials.workspaceId,
+      sessionToken: payload.sessionToken,
+    },
+    state: payload.state,
+  };
+}
+
+
+export async function requestRecoveryEmail(
+  workspaceId: string,
+): Promise<{ sentTo: string; expiresInSeconds: number }> {
+  return authRequest<{ sentTo: string; expiresInSeconds: number }>(
+    workspaceId,
+    '/auth/recovery/request',
+    {
+      method: 'POST',
+      body: JSON.stringify({ email: NMRNL_ACCOUNT_EMAIL }),
+    },
+  );
+}
+
+export async function verifyRecoveryEmailCode(
+  workspaceId: string,
+  code: string,
+): Promise<EmailRecoveryChallenge> {
+  return authRequest<EmailRecoveryChallenge>(
+    workspaceId,
+    '/auth/recovery/verify',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        email: NMRNL_ACCOUNT_EMAIL,
+        code,
+      }),
+    },
+  );
+}
+
+export async function confirmRecoveryAuthenticator(
+  workspaceId: string,
+  recoveryToken: string,
+  code: string,
+): Promise<{
+  credentials: WorkspaceCredentials;
+  state: WorkspaceState;
+}> {
+  const payload = await authRequest<{
+    sessionToken: string;
+    state: WorkspaceState;
+  }>(workspaceId, '/auth/recovery/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ recoveryToken, code }),
+  });
+
+  return {
+    credentials: {
+      workspaceId,
       sessionToken: payload.sessionToken,
     },
     state: payload.state,

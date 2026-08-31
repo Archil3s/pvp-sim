@@ -150,6 +150,8 @@ export interface WorkspaceState {
   workspaceId: string;
   createdAt: string;
   authenticatorEnabled: boolean;
+  accountEmail: string;
+  recoveryEmailEnabled: boolean;
   clients: Client[];
   entries: WorkEntry[];
   actions: GeneralAction[];
@@ -162,6 +164,13 @@ export interface WorkspaceCredentials {
 
 export interface WorkspaceSetupChallenge {
   workspaceId: string;
+  totpSecret: string;
+  otpauthUri: string;
+}
+
+export interface EmailRecoveryChallenge {
+  workspaceId: string;
+  recoveryToken: string;
   totpSecret: string;
   otpauthUri: string;
 }

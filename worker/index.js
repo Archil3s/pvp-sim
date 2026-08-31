@@ -20,6 +20,11 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const RATE_WINDOW_MS = 5 * 60 * 1000;
 const RATE_LOCK_MS = 10 * 60 * 1000;
 const MAX_AUTH_FAILURES = 5;
+const ACCOUNT_EMAIL = 'blenhiemmaleroom@gmail.com';
+const RECOVERY_CODE_TTL_MS = 10 * 60 * 1000;
+const RECOVERY_ENROL_TTL_MS = 10 * 60 * 1000;
+const RECOVERY_SEND_COOLDOWN_MS = 60 * 1000;
+const MAX_RECOVERY_ATTEMPTS = 5;
 
 function json(value, init = {}) {
   const headers = new Headers(init.headers || {});
@@ -39,6 +44,80 @@ function bytesToHex(bytes) {
 
 function randomToken() {
   return bytesToHex(randomBytes(32));
+}
+
+function randomSixDigitCode() {
+  const range = 1_000_000;
+  const max = Math.floor(0x1_0000_0000 / range) * range;
+  const values = new Uint32Array(1);
+
+  do {
+    crypto.getRandomValues(values);
+  } while (values[0] >= max);
+
+  return String(values[0] % range).padStart(6, '0');
+}
+
+async function sendRecoveryEmail(env, code, workspaceId) {
+  const from = String(env.RECOVERY_FROM_EMAIL || '').trim();
+  if (!from) {
+    throw new Error('RECOVERY_FROM_EMAIL is not configured.');
+  }
+
+  const message = {
+    to: ACCOUNT_EMAIL,
+    from,
+    subject: 'NMRNL recovery code',
+    text:
+      'Your NMRNL recovery code is ' +
+      code +
+      '. It expires in 10 minutes. Workspace: ' +
+      workspaceId +
+      '. If you did not request this, ignore this email.',
+    html:
+      '<h2>NMRNL account recovery</h2>' +
+      '<p>Your recovery code is:</p>' +
+      '<p style="font-size:32px;font-weight:800;letter-spacing:6px">' +
+      code +
+      '</p>' +
+      '<p>This code expires in 10 minutes.</p>' +
+      '<p>Workspace: <code>' +
+      workspaceId +
+      '</code></p>' +
+      '<p>If you did not request this, ignore this email.</p>',
+  };
+
+  if (env.RECOVERY_EMAIL && typeof env.RECOVERY_EMAIL.send === 'function') {
+    await env.RECOVERY_EMAIL.send(message);
+    return;
+  }
+
+  const accountId = String(env.CLOUDFLARE_EMAIL_ACCOUNT_ID || '').trim();
+  const apiToken = String(env.CLOUDFLARE_EMAIL_API_TOKEN || '').trim();
+
+  if (!accountId || !apiToken) {
+    throw new Error(
+      'Recovery email delivery is not configured. Add a RECOVERY_EMAIL binding or Cloudflare Email Service API credentials.',
+    );
+  }
+
+  const response = await fetch(
+    'https://api.cloudflare.com/client/v4/accounts/' +
+      encodeURIComponent(accountId) +
+      '/email/sending/send',
+    {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer ' + apiToken,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(message),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error('Cloudflare Email Service rejected the recovery email.');
+  }
 }
 
 function generateTotpSecret() {
@@ -289,6 +368,8 @@ export class SupervisorHub {
       workspaceId: resolvedMeta?.workspaceId || '',
       createdAt: resolvedMeta?.createdAt || new Date().toISOString(),
       authenticatorEnabled: Boolean(resolvedMeta?.totpEnabled),
+      accountEmail: ACCOUNT_EMAIL,
+      recoveryEmailEnabled: true,
       clients: resolvedData.clients,
       entries: resolvedData.entries,
       actions: resolvedData.actions,
@@ -473,6 +554,161 @@ export class SupervisorHub {
     if (checked.response) return checked.response;
 
     const sessionToken = await this.issueSession(meta);
+    return json({
+      sessionToken,
+      state: await this.snapshot(meta),
+    });
+  }
+
+  async requestEmailRecovery(request) {
+    const meta = await this.getMeta();
+    if (!meta) return json({ error: 'Workspace not found.' }, { status: 404 });
+    if (!meta.totpEnabled) {
+      return json(
+        { error: 'Finish Google Authenticator setup before using recovery.' },
+        { status: 409 },
+      );
+    }
+
+    const body = await readObject(request);
+    const email = stringValue(body.email).toLowerCase();
+    if (email !== ACCOUNT_EMAIL) {
+      return json({ error: 'This email account is not allowed.' }, { status: 403 });
+    }
+
+    const now = Date.now();
+    const sendRate = (await this.state.storage.get('recoverySendRate')) || null;
+    if (sendRate?.lastSentAt && now - sendRate.lastSentAt < RECOVERY_SEND_COOLDOWN_MS) {
+      const retryAfterSeconds = Math.ceil(
+        (RECOVERY_SEND_COOLDOWN_MS - (now - sendRate.lastSentAt)) / 1000,
+      );
+      return json(
+        { error: 'A recovery email was just sent. Try again shortly.' },
+        {
+          status: 429,
+          headers: { 'retry-after': String(retryAfterSeconds) },
+        },
+      );
+    }
+
+    const code = randomSixDigitCode();
+    const salt = randomToken().slice(0, 24);
+    const challenge = {
+      salt,
+      codeHash: await hashToken(salt + ':' + code),
+      expiresAt: new Date(now + RECOVERY_CODE_TTL_MS).toISOString(),
+      attempts: 0,
+    };
+
+    await this.state.storage.put('recoveryChallenge', challenge);
+
+    try {
+      await sendRecoveryEmail(this.env, code, meta.workspaceId);
+    } catch (error) {
+      await this.state.storage.delete('recoveryChallenge');
+      return json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Recovery email could not be sent.',
+        },
+        { status: 503 },
+      );
+    }
+
+    await this.state.storage.put('recoverySendRate', { lastSentAt: now });
+
+    return json({
+      sentTo: ACCOUNT_EMAIL,
+      expiresInSeconds: Math.floor(RECOVERY_CODE_TTL_MS / 1000),
+    });
+  }
+
+  async verifyEmailRecovery(request) {
+    const meta = await this.getMeta();
+    if (!meta) return json({ error: 'Workspace not found.' }, { status: 404 });
+
+    const body = await readObject(request);
+    const email = stringValue(body.email).toLowerCase();
+    const code = stringValue(body.code);
+
+    if (email !== ACCOUNT_EMAIL) {
+      return json({ error: 'This email account is not allowed.' }, { status: 403 });
+    }
+    if (!/^\d{6}$/.test(code)) {
+      return json({ error: 'Enter the 6-digit email recovery code.' }, { status: 400 });
+    }
+
+    const challenge = (await this.state.storage.get('recoveryChallenge')) || null;
+    if (!challenge || Date.parse(challenge.expiresAt) <= Date.now()) {
+      await this.state.storage.delete('recoveryChallenge');
+      return json({ error: 'Recovery code expired. Request a new one.' }, { status: 410 });
+    }
+
+    if ((challenge.attempts || 0) >= MAX_RECOVERY_ATTEMPTS) {
+      await this.state.storage.delete('recoveryChallenge');
+      return json({ error: 'Too many incorrect recovery codes. Request a new one.' }, { status: 429 });
+    }
+
+    const suppliedHash = await hashToken(challenge.salt + ':' + code);
+    if (!codesEqual(suppliedHash, challenge.codeHash)) {
+      challenge.attempts = (challenge.attempts || 0) + 1;
+      await this.state.storage.put('recoveryChallenge', challenge);
+      return json({ error: 'That email recovery code is not valid.' }, { status: 401 });
+    }
+
+    const totpSecret = generateTotpSecret();
+    const recoveryToken = randomToken();
+    await this.state.storage.put('recoveryEnrollment', {
+      tokenHash: await hashToken(recoveryToken),
+      totpSecret,
+      expiresAt: new Date(Date.now() + RECOVERY_ENROL_TTL_MS).toISOString(),
+    });
+    await this.state.storage.delete('recoveryChallenge');
+
+    return json({
+      workspaceId: meta.workspaceId,
+      recoveryToken,
+      totpSecret,
+      otpauthUri: otpauthUri(meta.workspaceId, totpSecret),
+    });
+  }
+
+  async confirmEmailRecovery(request) {
+    const meta = await this.getMeta();
+    if (!meta) return json({ error: 'Workspace not found.' }, { status: 404 });
+
+    const body = await readObject(request);
+    const recoveryToken = stringValue(body.recoveryToken);
+    const code = stringValue(body.code);
+    const enrollment = (await this.state.storage.get('recoveryEnrollment')) || null;
+
+    if (!enrollment || Date.parse(enrollment.expiresAt) <= Date.now()) {
+      await this.state.storage.delete('recoveryEnrollment');
+      return json({ error: 'Recovery setup expired. Start recovery again.' }, { status: 410 });
+    }
+
+    if (
+      !recoveryToken ||
+      !codesEqual(await hashToken(recoveryToken), enrollment.tokenHash)
+    ) {
+      return json({ error: 'Recovery session rejected.' }, { status: 401 });
+    }
+
+    if (!(await verifyTotp(enrollment.totpSecret, code))) {
+      return json({ error: 'That new Authenticator code is not valid.' }, { status: 401 });
+    }
+
+    meta.totpSecret = enrollment.totpSecret;
+    meta.totpEnabled = true;
+    meta.sessions = [];
+    delete meta.ownerTokenHash;
+
+    await this.state.storage.delete('recoveryEnrollment');
+    await this.state.storage.delete('recoveryChallenge');
+
+    const sessionToken = await this.issueSession(meta, true);
     return json({
       sessionToken,
       state: await this.snapshot(meta),
@@ -745,6 +981,18 @@ export class SupervisorHub {
         return this.loginWithAuthenticator(request);
       }
 
+      if (suffix === '/auth/recovery/request' && request.method === 'POST') {
+        return this.requestEmailRecovery(request);
+      }
+
+      if (suffix === '/auth/recovery/verify' && request.method === 'POST') {
+        return this.verifyEmailRecovery(request);
+      }
+
+      if (suffix === '/auth/recovery/confirm' && request.method === 'POST') {
+        return this.confirmEmailRecovery(request);
+      }
+
       const authError = await this.requireAuth(request);
       if (authError) return authError;
 
@@ -814,7 +1062,8 @@ export default {
         ok: true,
         app: 'NMRNL',
         service: 'pvp-sim',
-        auth: 'totp',
+        auth: 'totp+fixed-email-recovery',
+        accountEmail: ACCOUNT_EMAIL,
         storage: 'durable-object',
         now: new Date().toISOString(),
       });

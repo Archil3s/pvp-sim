@@ -20,10 +20,14 @@ import {
   loadCredentials,
   loadKnownWorkspaceId,
   loginWithTotp,
+  NMRNL_ACCOUNT_EMAIL,
   rememberWorkspaceId,
+  requestRecoveryEmail,
   saveCredentials,
+  confirmRecoveryAuthenticator,
   setGeneralActionCompleted,
   setVisitActionCompleted,
+  verifyRecoveryEmailCode,
 } from './api';
 import {
   ENTRY_TYPES,
@@ -35,6 +39,7 @@ import {
   localDateValue,
   localTimeValue,
   modeLabel,
+  type EmailRecoveryChallenge,
   type EntryDraft,
   type EntryTypeKey,
   type GeneralAction,
@@ -103,6 +108,266 @@ function Panel({
   );
 }
 
+function RecoveryAccess({
+  initialWorkspaceId,
+  onCancel,
+  onRecovered,
+}: {
+  initialWorkspaceId: string;
+  onCancel: () => void;
+  onRecovered: (credentials: WorkspaceCredentials, state: WorkspaceState) => void;
+}) {
+  const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId);
+  const [stage, setStage] = useState<'request' | 'email-code' | 'authenticator'>('request');
+  const [emailCode, setEmailCode] = useState('');
+  const [authCode, setAuthCode] = useState('');
+  const [challenge, setChallenge] = useState<EmailRecoveryChallenge | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    if (!challenge) {
+      setQrDataUrl('');
+      return;
+    }
+
+    QRCode.toDataURL(challenge.otpauthUri, {
+      width: 260,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+    })
+      .then((value) => {
+        if (active) setQrDataUrl(value);
+      })
+      .catch(() => {
+        if (active) setError('Could not render the replacement Authenticator QR.');
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [challenge]);
+
+  const sendCode = async () => {
+    const id = workspaceId.trim().toLowerCase();
+    if (id.length !== 16) {
+      setError('Enter the 16-character Workspace ID first.');
+      return;
+    }
+
+    setBusy(true);
+    setError('');
+    try {
+      await requestRecoveryEmail(id);
+      rememberWorkspaceId(id);
+      setWorkspaceId(id);
+      setStage('email-code');
+      setEmailCode('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not send recovery email.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verifyEmail = async (event: FormEvent) => {
+    event.preventDefault();
+    if (emailCode.length !== 6) return;
+
+    setBusy(true);
+    setError('');
+    try {
+      const next = await verifyRecoveryEmailCode(workspaceId, emailCode);
+      setChallenge(next);
+      setAuthCode('');
+      setStage('authenticator');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Recovery code rejected.');
+      setEmailCode('');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmAuthenticator = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!challenge || authCode.length !== 6) return;
+
+    setBusy(true);
+    setError('');
+    try {
+      const result = await confirmRecoveryAuthenticator(
+        workspaceId,
+        challenge.recoveryToken,
+        authCode,
+      );
+      rememberWorkspaceId(workspaceId);
+      saveCredentials(result.credentials);
+      onRecovered(result.credentials, result.state);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Authenticator code rejected.');
+      setAuthCode('');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <main className="setup-shell">
+      <section className="setup-card authenticator-card recovery-card">
+        <button type="button" className="recovery-back" onClick={onCancel}>
+          ← Back to sign in
+        </button>
+
+        <div className="code-login-brand">
+          <div className="brand-mark">N</div>
+          <div>
+            <div className="eyebrow">ACCOUNT RECOVERY</div>
+            <h1>
+              {stage === 'request'
+                ? 'Recover NMRNL'
+                : stage === 'email-code'
+                  ? 'Check your email'
+                  : 'Set up a new Authenticator'}
+            </h1>
+          </div>
+        </div>
+
+        {error && <div className="error-banner">{error}</div>}
+
+        {stage === 'request' && (
+          <div className="recovery-stack">
+            <p className="setup-lead">
+              Recovery is locked to the only approved NMRNL account.
+            </p>
+
+            <div className="locked-email-card">
+              <span className="locked-email-icon">✉</span>
+              <span>
+                <small>Recovery & account email</small>
+                <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
+              </span>
+              <b>ONLY ACCOUNT</b>
+            </div>
+
+            <label className="workspace-login-field">
+              Workspace ID
+              <input
+                value={workspaceId}
+                onChange={(event) => setWorkspaceId(event.target.value)}
+                placeholder="16-character workspace ID"
+                autoComplete="username"
+                autoFocus={!workspaceId}
+              />
+            </label>
+
+            <button
+              type="button"
+              className="primary big"
+              onClick={() => void sendCode()}
+              disabled={busy || workspaceId.trim().length !== 16}
+            >
+              {busy ? 'Sending…' : 'Email recovery code'}
+            </button>
+
+            <p className="privacy-note">
+              NMRNL will not send recovery codes to any other email address.
+            </p>
+          </div>
+        )}
+
+        {stage === 'email-code' && (
+          <form className="recovery-stack" onSubmit={verifyEmail}>
+            <p className="setup-lead">
+              Enter the 6-digit recovery code sent to <b>{NMRNL_ACCOUNT_EMAIL}</b>.
+              It expires after 10 minutes.
+            </p>
+
+            <label className="code-prompt">
+              <span>Email recovery code</span>
+              <input
+                className="totp-input login-code"
+                value={emailCode}
+                onChange={(event) =>
+                  setEmailCode(event.target.value.replace(/\D/g, '').slice(0, 6))
+                }
+                placeholder="000000"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                autoFocus
+              />
+            </label>
+
+            <button
+              className="primary big"
+              disabled={busy || emailCode.length !== 6}
+            >
+              {busy ? 'Checking…' : 'Verify recovery code'}
+            </button>
+
+            <button
+              type="button"
+              className="switch-workspace-button"
+              onClick={() => void sendCode()}
+              disabled={busy}
+            >
+              Send another code
+            </button>
+          </form>
+        )}
+
+        {stage === 'authenticator' && challenge && (
+          <form className="recovery-stack" onSubmit={confirmAuthenticator}>
+            <p className="setup-lead">
+              Email ownership is confirmed. Scan this new QR in Google Authenticator.
+              Your previous Authenticator setup will stop working after this step.
+            </p>
+
+            <div className="qr-shell">
+              {qrDataUrl ? (
+                <img src={qrDataUrl} alt="Replacement NMRNL Authenticator QR code" />
+              ) : (
+                <div className="qr-loading">Building QR…</div>
+              )}
+            </div>
+
+            <details className="manual-secret">
+              <summary>Can’t scan the QR?</summary>
+              <code>{challenge.totpSecret}</code>
+            </details>
+
+            <label className="code-prompt">
+              <span>New Authenticator code</span>
+              <input
+                className="totp-input login-code"
+                value={authCode}
+                onChange={(event) =>
+                  setAuthCode(event.target.value.replace(/\D/g, '').slice(0, 6))
+                }
+                placeholder="000000"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                autoFocus
+              />
+            </label>
+
+            <button
+              className="primary big"
+              disabled={busy || authCode.length !== 6}
+            >
+              {busy ? 'Securing account…' : 'Replace Authenticator & open NMRNL'}
+            </button>
+          </form>
+        )}
+      </section>
+    </main>
+  );
+}
+
 function WorkspaceSetup({
   onConnected,
 }: {
@@ -116,6 +381,7 @@ function WorkspaceSetup({
   const [code, setCode] = useState('');
   const [challenge, setChallenge] = useState<WorkspaceSetupChallenge | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
+  const [recovery, setRecovery] = useState(false);
   const [busy, setBusy] = useState<'create' | 'verify' | 'login' | null>(null);
   const [error, setError] = useState('');
 
@@ -201,6 +467,19 @@ function WorkspaceSetup({
     }
   };
 
+  if (recovery) {
+    return (
+      <RecoveryAccess
+        initialWorkspaceId={workspaceId || rememberedWorkspaceId}
+        onCancel={() => {
+          setRecovery(false);
+          setError('');
+        }}
+        onRecovered={onConnected}
+      />
+    );
+  }
+
   if (challenge) {
     return (
       <main className="setup-shell">
@@ -215,6 +494,15 @@ function WorkspaceSetup({
                 then enter the 6-digit code it generates.
               </p>
             </div>
+          </div>
+
+          <div className="locked-email-card setup-account">
+            <span className="locked-email-icon">✉</span>
+            <span>
+              <small>Only approved account</small>
+              <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
+            </span>
+            <b>LOCKED</b>
           </div>
 
           {error && <div className="error-banner">{error}</div>}
@@ -259,11 +547,6 @@ function WorkspaceSetup({
               {busy === 'verify' ? 'Verifying…' : 'Verify and open NMRNL'}
             </button>
           </form>
-
-          <p className="privacy-note">
-            Don’t close this page until the first code is verified. After verification,
-            the QR setup secret is no longer shown in NMRNL.
-          </p>
         </section>
       </main>
     );
@@ -282,6 +565,12 @@ function WorkspaceSetup({
             <div className="eyebrow">GOOGLE AUTHENTICATOR</div>
             <h1>{hasRememberedWorkspace ? 'Enter your code' : 'Sign in to NMRNL'}</h1>
           </div>
+        </div>
+
+        <div className="account-access-line">
+          <span>Account</span>
+          <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
+          <b>ONLY</b>
         </div>
 
         <p className="setup-lead code-login-lead">
@@ -341,6 +630,22 @@ function WorkspaceSetup({
           </button>
         </form>
 
+        <button
+          type="button"
+          className="email-recovery-button"
+          onClick={() => {
+            setRecovery(true);
+            setCode('');
+            setError('');
+          }}
+        >
+          <span>✉</span>
+          <span>
+            <strong>Can’t access Google Authenticator?</strong>
+            <small>Recover with {NMRNL_ACCOUNT_EMAIL}</small>
+          </span>
+        </button>
+
         {rememberedWorkspaceId && (
           <button
             type="button"
@@ -354,14 +659,6 @@ function WorkspaceSetup({
             {showWorkspaceField ? 'Use saved workspace' : 'Use a different workspace'}
           </button>
         )}
-
-        <div className="auth-security-note code-login-note">
-          <span>✓</span>
-          <p>
-            Your Workspace ID is remembered on this browser. Your Google
-            Authenticator code is still required whenever a new NMRNL session starts.
-          </p>
-        </div>
 
         <div className="setup-divider"><span>new workspace</span></div>
 
@@ -1304,6 +1601,21 @@ function WorkspaceScreen({
       </section>
 
       {error && <div className="error-banner">{error}</div>}
+
+      <Panel title="Account & recovery email" subtitle="Email access is restricted to one account">
+        <div className="locked-email-card workspace-email-card">
+          <span className="locked-email-icon">✉</span>
+          <span>
+            <small>Only approved NMRNL account</small>
+            <strong>{state.accountEmail || NMRNL_ACCOUNT_EMAIL}</strong>
+          </span>
+          <b>{state.recoveryEmailEnabled ? 'RECOVERY ON' : 'LOCKED'}</b>
+        </div>
+        <p className="panel-footnote">
+          Authenticator recovery codes can only be sent to this address. There is no
+          option to add a second account or change the recovery destination in NMRNL.
+        </p>
+      </Panel>
 
       <Panel
         title="Google Authenticator"
