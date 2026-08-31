@@ -3,6 +3,19 @@ const JSON_HEADERS = {
   'cache-control': 'no-store',
 };
 
+const MODES = new Set(['work', 'casework', 'paye']);
+const ENTRY_TYPES = new Set([
+  'homeVisit',
+  'professionalContact',
+  'phoneCall',
+  'videoCall',
+  'emailClient',
+  'emailProfessional',
+  'adminEducationResources',
+  'textNote',
+]);
+const TEXT_DIRECTIONS = new Set(['received', 'sent', 'exchange']);
+
 function json(value, init = {}) {
   const headers = new Headers(init.headers || {});
   for (const [key, val] of Object.entries(JSON_HEADERS)) headers.set(key, val);
@@ -18,112 +31,393 @@ function randomToken() {
 async function hashToken(token) {
   const bytes = new TextEncoder().encode(token);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0'),
+  ).join('');
 }
 
 function bearer(request) {
   const header = request.headers.get('authorization') || '';
-  return header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+  return header.toLowerCase().startsWith('bearer ')
+    ? header.slice(7).trim()
+    : '';
 }
 
-function safeSessionId(value) {
-  return /^[a-z0-9]{12,40}$/i.test(value) ? value.toLowerCase() : '';
+function safeWorkspaceId(value) {
+  return /^[a-f0-9]{16}$/i.test(value) ? value.toLowerCase() : '';
 }
 
-export class NmrnlStore {
+function stringValue(value, fallback = '') {
+  return typeof value === 'string' ? value.trim() : fallback;
+}
+
+function numberValue(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function modeValue(value) {
+  const mode = stringValue(value);
+  return MODES.has(mode) ? mode : 'work';
+}
+
+function cloneDefaultData() {
+  return {
+    version: 1,
+    clients: [],
+    entries: [],
+    actions: [],
+  };
+}
+
+function normaliseData(value) {
+  if (!value || typeof value !== 'object') return cloneDefaultData();
+  return {
+    version: 1,
+    clients: Array.isArray(value.clients) ? value.clients : [],
+    entries: Array.isArray(value.entries) ? value.entries : [],
+    actions: Array.isArray(value.actions) ? value.actions : [],
+  };
+}
+
+async function readObject(request) {
+  let value;
+  try {
+    value = await request.json();
+  } catch {
+    throw new Error('Invalid JSON body.');
+  }
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Expected a JSON object.');
+  }
+
+  return value;
+}
+
+export class SupervisorHub {
   constructor(state, env) {
     this.state = state;
     this.env = env;
-    this.sockets = new Set();
   }
 
-  async auth(request, kind) {
-    const meta = await this.state.storage.get('meta');
+  async getMeta() {
+    return (await this.state.storage.get('meta')) || null;
+  }
+
+  async getData() {
+    return normaliseData(await this.state.storage.get('data'));
+  }
+
+  async putData(data) {
+    await this.state.storage.put('data', normaliseData(data));
+  }
+
+  async authenticated(request) {
+    const meta = await this.getMeta();
     if (!meta) return false;
-    const url = new URL(request.url);
-    const supplied = kind === 'view' ? (bearer(request) || url.searchParams.get('view') || '') : bearer(request);
-    if (!supplied) return false;
-    const actual = await hashToken(supplied);
-    return actual === meta[`${kind}TokenHash`];
+    const token = bearer(request);
+    if (!token) return false;
+    return (await hashToken(token)) === meta.ownerTokenHash;
   }
 
-  async snapshot() {
-    const [meta, telemetry] = await Promise.all([
-      this.state.storage.get('meta'),
-      this.state.storage.get('telemetry'),
-    ]);
-    const lastSeen = telemetry?.receivedAt || null;
-    const online = lastSeen ? Date.now() - Date.parse(lastSeen) < 15000 : false;
+  async snapshot(meta = null, data = null) {
+    const resolvedMeta = meta || (await this.getMeta());
+    const resolvedData = data || (await this.getData());
+
     return {
-      sessionId: meta?.sessionId || '',
-      createdAt: meta?.createdAt || null,
-      lastSeen,
-      online,
-      telemetry: telemetry?.payload || null,
+      workspaceId: resolvedMeta?.workspaceId || '',
+      createdAt: resolvedMeta?.createdAt || new Date().toISOString(),
+      clients: resolvedData.clients,
+      entries: resolvedData.entries,
+      actions: resolvedData.actions,
     };
   }
 
-  broadcast(payload) {
-    const message = JSON.stringify(payload);
-    for (const socket of this.sockets) {
-      try {
-        socket.send(message);
-      } catch {
-        try { socket.close(1011, 'send failed'); } catch {}
-        this.sockets.delete(socket);
+  async requireAuth(request) {
+    if (!(await this.authenticated(request))) {
+      return json({ error: 'Workspace key rejected.' }, { status: 401 });
+    }
+    return null;
+  }
+
+  async initialise(request) {
+    const existing = await this.getMeta();
+    if (existing) {
+      return json({ error: 'Workspace already exists.' }, { status: 409 });
+    }
+
+    const workspaceId = safeWorkspaceId(
+      request.headers.get('x-workspace-id') || '',
+    );
+    const ownerToken = request.headers.get('x-owner-token') || '';
+
+    if (!workspaceId || ownerToken.length < 32) {
+      return json({ error: 'Invalid workspace setup.' }, { status: 400 });
+    }
+
+    const createdAt = new Date().toISOString();
+    const meta = {
+      workspaceId,
+      createdAt,
+      ownerTokenHash: await hashToken(ownerToken),
+    };
+    const data = cloneDefaultData();
+
+    await this.state.storage.put('meta', meta);
+    await this.putData(data);
+
+    return json({ state: await this.snapshot(meta, data) }, { status: 201 });
+  }
+
+  async createEntry(request) {
+    const body = await readObject(request);
+    const mode = modeValue(body.mode);
+    const type = stringValue(body.type);
+    const date = stringValue(body.date);
+    const startTime = stringValue(body.startTime);
+    const requestedClient = stringValue(body.client);
+    const minutes = Math.max(
+      0,
+      Math.min(1440, Math.round(numberValue(body.minutes) || 0)),
+    );
+
+    if (!ENTRY_TYPES.has(type)) {
+      return json({ error: 'Unknown entry type.' }, { status: 400 });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return json({ error: 'A valid date is required.' }, { status: 400 });
+    }
+    if (!/^\d{2}:\d{2}$/.test(startTime)) {
+      return json({ error: 'A valid start time is required.' }, { status: 400 });
+    }
+
+    let client = requestedClient;
+    if (!client) {
+      if (type === 'emailProfessional') client = 'Professional email';
+      else if (type === 'adminEducationResources') {
+        client = 'Admin / Education / Resources';
+      } else {
+        return json({ error: 'Client is required for this entry type.' }, { status: 400 });
       }
     }
+
+    const now = new Date().toISOString();
+    const data = await this.getData();
+
+    let clientRecord = data.clients.find(
+      (item) =>
+        item.mode === mode &&
+        String(item.name || '').toLowerCase() === client.toLowerCase(),
+    );
+
+    if (!clientRecord) {
+      clientRecord = {
+        id: crypto.randomUUID(),
+        name: client,
+        mode,
+        createdAt: now,
+      };
+      data.clients.push(clientRecord);
+    }
+
+    const notes = Array.isArray(body.notes)
+      ? body.notes
+          .map((item) => stringValue(item))
+          .filter(Boolean)
+          .slice(0, 100)
+      : [];
+
+    const nextActionText = stringValue(body.nextAction);
+    const nextActions = nextActionText
+      ? [
+          {
+            id: crypto.randomUUID(),
+            text: nextActionText,
+            createdAt: now,
+            completedAt: null,
+          },
+        ]
+      : [];
+
+    const direction = TEXT_DIRECTIONS.has(stringValue(body.textContactDirection))
+      ? stringValue(body.textContactDirection)
+      : 'received';
+
+    const odometerStart = numberValue(body.odometerStart);
+    const odometerEnd = numberValue(body.odometerEnd);
+
+    const entry = {
+      id: crypto.randomUUID(),
+      mode,
+      clientId: clientRecord.id,
+      client,
+      type,
+      date,
+      startTime,
+      minutes,
+      notes,
+      supportNoteBreakdown: stringValue(body.supportNoteBreakdown),
+      nextActions,
+      googleCalendarEntered: false,
+      importantText: body.importantText === true,
+      textContactDirection: direction,
+      textReplyNeeded: body.textReplyNeeded === true,
+      odometerStart: type === 'homeVisit' ? odometerStart : null,
+      odometerEnd: type === 'homeVisit' ? odometerEnd : null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    data.entries.push(entry);
+    await this.putData(data);
+
+    return json({ state: await this.snapshot(null, data), entry }, { status: 201 });
+  }
+
+  async deleteEntry(entryId) {
+    const data = await this.getData();
+    const before = data.entries.length;
+    data.entries = data.entries.filter((entry) => entry.id !== entryId);
+
+    if (data.entries.length === before) {
+      return json({ error: 'Entry not found.' }, { status: 404 });
+    }
+
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data) });
+  }
+
+  async setVisitAction(request, entryId, actionId) {
+    const body = await readObject(request);
+    const completed = body.completed === true;
+    const data = await this.getData();
+    const entry = data.entries.find((item) => item.id === entryId);
+
+    if (!entry) return json({ error: 'Entry not found.' }, { status: 404 });
+
+    const action = Array.isArray(entry.nextActions)
+      ? entry.nextActions.find((item) => item.id === actionId)
+      : null;
+
+    if (!action) {
+      return json({ error: 'Visit action not found.' }, { status: 404 });
+    }
+
+    action.completedAt = completed ? new Date().toISOString() : null;
+    entry.updatedAt = new Date().toISOString();
+
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data) });
+  }
+
+  async createGeneralAction(request) {
+    const body = await readObject(request);
+    const title = stringValue(body.title);
+
+    if (!title) {
+      return json({ error: 'Action title is required.' }, { status: 400 });
+    }
+
+    const now = new Date().toISOString();
+    const data = await this.getData();
+    const action = {
+      id: crypto.randomUUID(),
+      mode: modeValue(body.mode),
+      title,
+      scope:
+        stringValue(body.scope) === 'knowledgeGap'
+          ? 'knowledgeGap'
+          : 'client',
+      client: stringValue(body.client) || null,
+      createdAt: now,
+      completedAt: null,
+      updatedAt: now,
+    };
+
+    data.actions.push(action);
+    await this.putData(data);
+
+    return json({ state: await this.snapshot(null, data), action }, { status: 201 });
+  }
+
+  async setGeneralAction(request, actionId) {
+    const body = await readObject(request);
+    const completed = body.completed === true;
+    const data = await this.getData();
+    const action = data.actions.find((item) => item.id === actionId);
+
+    if (!action) {
+      return json({ error: 'Action not found.' }, { status: 404 });
+    }
+
+    action.completedAt = completed ? new Date().toISOString() : null;
+    action.updatedAt = new Date().toISOString();
+
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data) });
   }
 
   async fetch(request) {
     const url = new URL(request.url);
+    const workspaceMatch = url.pathname.match(
+      /^\/api\/workspace\/([a-f0-9]{16})(\/.*)?$/i,
+    );
 
-    if (url.pathname.endsWith('/init') && request.method === 'POST') {
-      const existing = await this.state.storage.get('meta');
-      if (existing) return json({ ok: true, existing: true });
-      const sessionId = safeSessionId(request.headers.get('x-session-id') || '');
-      const writeToken = request.headers.get('x-write-token') || '';
-      const viewToken = request.headers.get('x-view-token') || '';
-      if (!sessionId || !writeToken || !viewToken) return json({ error: 'invalid init' }, { status: 400 });
-      await this.state.storage.put('meta', {
-        sessionId,
-        createdAt: new Date().toISOString(),
-        writeTokenHash: await hashToken(writeToken),
-        viewTokenHash: await hashToken(viewToken),
-      });
-      return json({ ok: true });
+    if (!workspaceMatch) {
+      return json({ error: 'Invalid workspace route.' }, { status: 404 });
     }
 
-    if (url.pathname.endsWith('/telemetry') && request.method === 'POST') {
-      if (!(await this.auth(request, 'write'))) return json({ error: 'unauthorized' }, { status: 401 });
-      let payload;
-      try { payload = await request.json(); } catch { return json({ error: 'invalid json' }, { status: 400 }); }
-      if (!payload || typeof payload !== 'object') return json({ error: 'invalid payload' }, { status: 400 });
-      const record = { receivedAt: new Date().toISOString(), payload };
-      await this.state.storage.put('telemetry', record);
-      this.broadcast(await this.snapshot());
-      return json({ ok: true, receivedAt: record.receivedAt });
+    const suffix = workspaceMatch[2] || '/';
+
+    if (suffix === '/init' && request.method === 'POST') {
+      return this.initialise(request);
     }
 
-    if (url.pathname.endsWith('/ws')) {
-      if (!(await this.auth(request, 'view'))) return new Response('Unauthorized', { status: 401 });
-      if ((request.headers.get('upgrade') || '').toLowerCase() !== 'websocket') return new Response('Expected websocket', { status: 426 });
-      const pair = new WebSocketPair();
-      const [client, server] = Object.values(pair);
-      server.accept();
-      this.sockets.add(server);
-      server.addEventListener('close', () => this.sockets.delete(server));
-      server.addEventListener('error', () => this.sockets.delete(server));
-      try { server.send(JSON.stringify(await this.snapshot())); } catch {}
-      return new Response(null, { status: 101, webSocket: client });
+    const authError = await this.requireAuth(request);
+    if (authError) return authError;
+
+    if (suffix === '/snapshot' && request.method === 'GET') {
+      return json({ state: await this.snapshot() });
     }
 
-    if (request.method === 'GET') {
-      if (!(await this.auth(request, 'view'))) return json({ error: 'unauthorized' }, { status: 401 });
-      return json(await this.snapshot());
+    if (suffix === '/entries' && request.method === 'POST') {
+      return this.createEntry(request);
     }
 
-    return json({ error: 'method not allowed' }, { status: 405 });
+    const entryDelete = suffix.match(/^\/entries\/([^/]+)$/);
+    if (entryDelete && request.method === 'DELETE') {
+      return this.deleteEntry(decodeURIComponent(entryDelete[1]));
+    }
+
+    const visitAction = suffix.match(
+      /^\/entries\/([^/]+)\/actions\/([^/]+)$/,
+    );
+    if (visitAction && request.method === 'PATCH') {
+      return this.setVisitAction(
+        request,
+        decodeURIComponent(visitAction[1]),
+        decodeURIComponent(visitAction[2]),
+      );
+    }
+
+    if (suffix === '/actions' && request.method === 'POST') {
+      return this.createGeneralAction(request);
+    }
+
+    const generalAction = suffix.match(/^\/actions\/([^/]+)$/);
+    if (generalAction && request.method === 'PATCH') {
+      return this.setGeneralAction(
+        request,
+        decodeURIComponent(generalAction[1]),
+      );
+    }
+
+    return json({ error: 'Workspace route not found.' }, { status: 404 });
   }
 }
 
@@ -132,43 +426,63 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === '/api/health') {
-      return json({ ok: true, service: 'nmrnl', now: new Date().toISOString() });
-    }
-
-    // Temporary compatibility path while the Support Worker Log workflows are ported.
-    // The old supervisor API stays functional until its frontend is replaced.
-    if (url.pathname === '/api/session' && request.method === 'POST') {
-      const sessionId = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
-      const writeToken = randomToken();
-      const viewToken = randomToken();
-      const id = env.NMRNL_STORE.idFromName(sessionId);
-      const stub = env.NMRNL_STORE.get(id);
-      const initRequest = new Request(`${url.origin}/api/session/${sessionId}/init`, {
-        method: 'POST',
-        headers: {
-          'x-session-id': sessionId,
-          'x-write-token': writeToken,
-          'x-view-token': viewToken,
-        },
-      });
-      const initialized = await stub.fetch(initRequest);
-      if (!initialized.ok) return json({ error: 'failed to initialize session' }, { status: 500 });
       return json({
-        sessionId,
-        writeToken,
-        viewToken,
-        viewerPath: `/?session=${encodeURIComponent(sessionId)}&view=${encodeURIComponent(viewToken)}`,
-      }, { status: 201 });
+        ok: true,
+        app: 'NMRNL',
+        service: 'pvp-sim',
+        storage: 'durable-object',
+        now: new Date().toISOString(),
+      });
     }
 
-    const match = url.pathname.match(/^\/api\/session\/([a-z0-9]{12,40})(?:\/(telemetry|ws))?$/i);
+    if (url.pathname === '/api/workspace' && request.method === 'POST') {
+      const workspaceId = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
+      const ownerToken = randomToken();
+      const objectId = env.SUPERVISOR_HUB.idFromName('nmrnl:' + workspaceId);
+      const stub = env.SUPERVISOR_HUB.get(objectId);
+      const initRequest = new Request(
+        url.origin + '/api/workspace/' + workspaceId + '/init',
+        {
+          method: 'POST',
+          headers: {
+            'x-workspace-id': workspaceId,
+            'x-owner-token': ownerToken,
+          },
+        },
+      );
+
+      const initialised = await stub.fetch(initRequest);
+      if (!initialised.ok) {
+        return json({ error: 'Could not initialise NMRNL workspace.' }, { status: 500 });
+      }
+
+      const payload = await initialised.json();
+      return json(
+        {
+          workspaceId,
+          ownerToken,
+          state: payload.state,
+        },
+        { status: 201 },
+      );
+    }
+
+    const match = url.pathname.match(
+      /^\/api\/workspace\/([a-f0-9]{16})(?:\/.*)?$/i,
+    );
     if (match) {
-      const sessionId = safeSessionId(match[1]);
-      const id = env.NMRNL_STORE.idFromName(sessionId);
-      return env.NMRNL_STORE.get(id).fetch(request);
+      const workspaceId = safeWorkspaceId(match[1]);
+      if (!workspaceId) {
+        return json({ error: 'Invalid workspace ID.' }, { status: 400 });
+      }
+      const objectId = env.SUPERVISOR_HUB.idFromName('nmrnl:' + workspaceId);
+      return env.SUPERVISOR_HUB.get(objectId).fetch(request);
     }
 
-    if (url.pathname.startsWith('/api/')) return json({ error: 'not found' }, { status: 404 });
+    if (url.pathname.startsWith('/api/')) {
+      return json({ error: 'Not found.' }, { status: 404 });
+    }
+
     return env.ASSETS.fetch(request);
   },
 };

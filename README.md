@@ -2,34 +2,45 @@
 
 Cloudflare-native rebuild of `Archil3s/support_worker_log`.
 
-This repository was previously the `pvp-sim` / Codex Supervisor Cloudflare project. The pre-NMRNL state is preserved on:
+**Important:** the source `support_worker_log` repository is reference-only. NMRNL is developed only in this repository. The original application is not modified by this port.
+
+The pre-NMRNL state of this repository is preserved on:
 
 `archive/pvp-sim-before-nmrnl`
 
-## Direction
+## Ported now
 
-NMRNL will port the useful workflows from Support Worker Log into a web-first Cloudflare application:
-
+- Private Cloudflare workspace creation
+- Work / Casework / PAYE modes
+- Dashboard
 - Quick Entry
-- Work / PAYE / casework modes
-- Clients and entries
-- Support notes and follow-up actions
-- Calendar and reporting
-- Pay-period / invoice helpers
-- Personal modules where they still make sense
-- Google Drive / Calendar integration in later slices
+- Original core entry types
+- Client reuse
+- Home-visit odometer / KM data
+- Notes and structured support-note breakdown
+- Visit follow-up actions
+- General client / knowledge-gap actions
+- Entries search and type filtering
+- Mobile + desktop navigation
 
-## Cloudflare
+## Privacy model
 
-The existing Vite + Cloudflare Worker deployment structure is retained so the current Git-connected Cloudflare project can be reused.
+Each NMRNL workspace is a separate Durable Object. Creating a workspace returns a random Workspace ID and 256-bit owner key. The key is stored only in the browser and is required for every read/write request.
 
-The Worker service name is now `nmrnl`.
+Back up the Workspace ID and owner key from the Workspace screen before using another device.
 
-Initial persistence uses a Durable Object with SQLite-backed storage. That avoids introducing an unconfigured D1 database during the first deployment. We can split larger datasets into D1/R2 once the core port is stable.
+## Cloudflare deployment name
 
-## Build
+The application is NMRNL, but `wrangler.jsonc` temporarily retains the Worker deployment name `pvp-sim` because the existing Cloudflare Git-connected Worker still has that name. Cloudflare requires these names to match for Git builds.
 
-```bash
-npm install
-npm run build
-```
+After the Worker is renamed to `nmrnl` in the Cloudflare dashboard, update the Wrangler `name` field to `nmrnl`.
+
+## Next port slices
+
+- Entry editing
+- Full support-note editor
+- Calendar
+- Pay period / totals
+- Google Drive / Calendar
+- Admin review and charts
+- Selected casework modules
