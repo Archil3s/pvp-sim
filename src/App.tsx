@@ -17,6 +17,7 @@ import {
   createGeneralAction,
   createWorkspace,
   deleteEntry,
+  fetchAccountWorkspace,
   fetchWorkspace,
   loadCredentials,
   loadKnownWorkspaceId,
@@ -108,15 +109,14 @@ function Panel({
 }
 
 function RecoveryAccess({
-  initialWorkspaceId,
+  workspaceId,
   onCancel,
   onRecovered,
 }: {
-  initialWorkspaceId: string;
+  workspaceId: string;
   onCancel: () => void;
   onRecovered: (credentials: WorkspaceCredentials, state: WorkspaceState) => void;
 }) {
-  const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId);
   const [authCode, setAuthCode] = useState('');
   const [challenge, setChallenge] = useState<EmailRecoveryChallenge | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
@@ -148,18 +148,12 @@ function RecoveryAccess({
   }, [challenge]);
 
   const startRecovery = async () => {
-    const id = workspaceId.trim().toLowerCase();
-    if (id.length !== 16) {
-      setError('Enter the 16-character Workspace ID first.');
-      return;
-    }
+    if (!workspaceId) return;
 
     setBusy(true);
     setError('');
     try {
-      const next = await beginAccessRecovery(id);
-      rememberWorkspaceId(id);
-      setWorkspaceId(id);
+      const next = await beginAccessRecovery(workspaceId);
       setChallenge(next);
       setAuthCode('');
     } catch (reason) {
@@ -185,7 +179,6 @@ function RecoveryAccess({
         challenge.recoveryToken,
         authCode,
       );
-      rememberWorkspaceId(workspaceId);
       saveCredentials(result.credentials);
       onRecovered(result.credentials, result.state);
     } catch (reason) {
@@ -206,7 +199,7 @@ function RecoveryAccess({
         <div className="code-login-brand">
           <div className="brand-mark">N</div>
           <div>
-            <div className="eyebrow">CLOUDFLARE-VERIFIED RECOVERY</div>
+            <div className="eyebrow">MALEROOM ACCOUNT RECOVERY</div>
             <h1>{challenge ? 'Set up a new Authenticator' : 'Recover NMRNL'}</h1>
           </div>
         </div>
@@ -216,50 +209,38 @@ function RecoveryAccess({
         {!challenge ? (
           <div className="recovery-stack">
             <p className="setup-lead">
-              Cloudflare Access has already verified the only approved account.
-              Recovery will replace the Google Authenticator secret for this workspace.
+              Your NMRNL workspace is attached to the Maleroom account. Cloudflare
+              Access has already verified the email before this screen loads.
             </p>
 
             <div className="locked-email-card">
               <span className="locked-email-icon">✓</span>
               <span>
-                <small>Verified account</small>
+                <small>Workspace owner</small>
                 <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
               </span>
-              <b>ACCESS VERIFIED</b>
+              <b>SYNCED</b>
             </div>
-
-            <label className="workspace-login-field">
-              Workspace ID
-              <input
-                value={workspaceId}
-                onChange={(event) => setWorkspaceId(event.target.value)}
-                placeholder="16-character workspace ID"
-                autoComplete="username"
-                autoFocus={!workspaceId}
-              />
-            </label>
 
             <button
               type="button"
               className="primary big"
               onClick={() => void startRecovery()}
-              disabled={busy || workspaceId.trim().length !== 16}
+              disabled={busy || !workspaceId}
             >
               {busy ? 'Preparing recovery…' : 'Replace Google Authenticator'}
             </button>
 
             <p className="privacy-note">
-              No recovery email is sent by NMRNL. The Cloudflare Access login is the
-              email ownership check.
+              No Workspace ID is needed. The Maleroom account resolves the same
+              workspace on every device.
             </p>
           </div>
         ) : (
           <form className="recovery-stack" onSubmit={confirmAuthenticator}>
             <p className="setup-lead">
-              Scan this replacement QR in Google Authenticator. Confirming the new
-              6-digit code invalidates the previous Authenticator secret and old NMRNL
-              sessions.
+              Scan this replacement QR in Google Authenticator, then enter the new
+              6-digit code.
             </p>
 
             <div className="qr-shell">
@@ -291,10 +272,7 @@ function RecoveryAccess({
               />
             </label>
 
-            <button
-              className="primary big"
-              disabled={busy || authCode.length !== 6}
-            >
+            <button className="primary big" disabled={busy || authCode.length !== 6}>
               {busy ? 'Securing account…' : 'Replace Authenticator & open NMRNL'}
             </button>
           </form>
@@ -309,17 +287,44 @@ function WorkspaceSetup({
 }: {
   onConnected: (credentials: WorkspaceCredentials, state: WorkspaceState) => void;
 }) {
-  const rememberedWorkspaceId = loadKnownWorkspaceId();
-  const [workspaceId, setWorkspaceId] = useState(rememberedWorkspaceId);
-  const [showWorkspaceField, setShowWorkspaceField] = useState(
-    !rememberedWorkspaceId,
-  );
+  const [workspaceId, setWorkspaceId] = useState('');
+  const [workspaceExists, setWorkspaceExists] = useState(false);
+  const [authenticatorEnabled, setAuthenticatorEnabled] = useState(false);
+  const [accountLoading, setAccountLoading] = useState(true);
   const [code, setCode] = useState('');
   const [challenge, setChallenge] = useState<WorkspaceSetupChallenge | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [recovery, setRecovery] = useState(false);
   const [busy, setBusy] = useState<'create' | 'verify' | 'login' | null>(null);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    fetchAccountWorkspace()
+      .then((account) => {
+        if (!active) return;
+        setWorkspaceId(account.workspaceId);
+        setWorkspaceExists(account.exists);
+        setAuthenticatorEnabled(account.authenticatorEnabled);
+        if (account.workspaceId) rememberWorkspaceId(account.workspaceId);
+      })
+      .catch((reason) => {
+        if (!active) return;
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : 'Could not load the Maleroom workspace.',
+        );
+      })
+      .finally(() => {
+        if (active) setAccountLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -354,9 +359,9 @@ function WorkspaceSetup({
     setError('');
     try {
       const nextChallenge = await createWorkspace();
-      rememberWorkspaceId(nextChallenge.workspaceId);
       setWorkspaceId(nextChallenge.workspaceId);
-      setShowWorkspaceField(false);
+      setWorkspaceExists(true);
+      rememberWorkspaceId(nextChallenge.workspaceId);
       setChallenge(nextChallenge);
       setCode('');
     } catch (reason) {
@@ -375,6 +380,7 @@ function WorkspaceSetup({
     try {
       const result = await confirmWorkspaceTotp(challenge.workspaceId, code);
       saveCredentials(result.credentials);
+      setAuthenticatorEnabled(true);
       onConnected(result.credentials, result.state);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Authenticator code rejected.');
@@ -385,14 +391,12 @@ function WorkspaceSetup({
 
   const connect = async (event: FormEvent) => {
     event.preventDefault();
-    const id = workspaceId.trim().toLowerCase();
-    if (!id || code.length !== 6) return;
+    if (!workspaceId || code.length !== 6) return;
 
     setBusy('login');
     setError('');
     try {
-      const result = await loginWithTotp(id, code);
-      rememberWorkspaceId(id);
+      const result = await loginWithTotp(workspaceId, code);
       saveCredentials(result.credentials);
       onConnected(result.credentials, result.state);
     } catch (reason) {
@@ -406,7 +410,7 @@ function WorkspaceSetup({
   if (recovery) {
     return (
       <RecoveryAccess
-        initialWorkspaceId={workspaceId || rememberedWorkspaceId}
+        workspaceId={workspaceId}
         onCancel={() => {
           setRecovery(false);
           setError('');
@@ -424,10 +428,10 @@ function WorkspaceSetup({
             <div className="brand-mark">N</div>
             <div>
               <div className="eyebrow">GOOGLE AUTHENTICATOR SETUP</div>
-              <h1>Scan to secure NMRNL</h1>
+              <h1>Secure your Maleroom workspace</h1>
               <p className="setup-lead">
-                Your Cloudflare email login has been verified. Scan this QR in Google
-                Authenticator, then enter the generated 6-digit code.
+                This workspace is permanently attached to {NMRNL_ACCOUNT_EMAIL}.
+                Scan the QR, then enter the generated 6-digit code.
               </p>
             </div>
           </div>
@@ -435,10 +439,10 @@ function WorkspaceSetup({
           <div className="locked-email-card setup-account">
             <span className="locked-email-icon">✓</span>
             <span>
-              <small>Cloudflare Access account</small>
+              <small>Workspace owner</small>
               <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
             </span>
-            <b>VERIFIED</b>
+            <b>SYNCED</b>
           </div>
 
           {error && <div className="error-banner">{error}</div>}
@@ -449,11 +453,6 @@ function WorkspaceSetup({
             ) : (
               <div className="qr-loading">Building QR…</div>
             )}
-          </div>
-
-          <div className="setup-identity">
-            <span>Workspace ID</span>
-            <code>{challenge.workspaceId}</code>
           </div>
 
           <details className="manual-secret">
@@ -488,124 +487,85 @@ function WorkspaceSetup({
     );
   }
 
-  const hasRememberedWorkspace = Boolean(
-    rememberedWorkspaceId && !showWorkspaceField,
-  );
-
   return (
     <main className="setup-shell">
       <section className="setup-card code-login-card">
         <div className="code-login-brand">
           <div className="brand-mark">N</div>
           <div>
-            <div className="eyebrow">GOOGLE AUTHENTICATOR</div>
-            <h1>{hasRememberedWorkspace ? 'Enter your code' : 'Sign in to NMRNL'}</h1>
+            <div className="eyebrow">MALEROOM ACCOUNT</div>
+            <h1>{workspaceExists ? 'Sign in to NMRNL' : 'Set up NMRNL'}</h1>
           </div>
         </div>
 
         <div className="account-access-line">
-          <span>Cloudflare verified</span>
+          <span>Workspace owner</span>
           <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
-          <b>ONLY</b>
+          <b>SYNCED</b>
         </div>
 
         <p className="setup-lead code-login-lead">
-          {hasRememberedWorkspace
-            ? 'Cloudflare has verified your email. Enter the current 6-digit NMRNL code from Google Authenticator.'
-            : 'Enter your Workspace ID once, then use the current 6-digit code from Google Authenticator.'}
+          {accountLoading
+            ? 'Finding your Maleroom workspace…'
+            : workspaceExists
+              ? 'Your workspace is linked to this email. Enter the current 6-digit Google Authenticator code on any device.'
+              : 'No workspace exists for this account yet. Create it once and it will be available on every device.'}
         </p>
 
         {error && <div className="error-banner">{error}</div>}
 
-        <form className="code-login-form" onSubmit={connect}>
-          {showWorkspaceField ? (
-            <label className="workspace-login-field">
-              Workspace ID
-              <input
-                value={workspaceId}
-                onChange={(event) => setWorkspaceId(event.target.value)}
-                placeholder="16-character workspace ID"
-                autoComplete="username"
-                autoFocus={!rememberedWorkspaceId}
-              />
-            </label>
-          ) : (
-            <div className="remembered-workspace">
-              <span className="remembered-check">✓</span>
+        {workspaceExists && authenticatorEnabled ? (
+          <>
+            <form className="code-login-form" onSubmit={connect}>
+              <label className="code-prompt">
+                <span>Authenticator code</span>
+                <input
+                  className="totp-input login-code"
+                  value={code}
+                  onChange={(event) => updateCode(event.target.value)}
+                  placeholder="000000"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  autoFocus
+                  aria-label="6-digit Google Authenticator code"
+                />
+              </label>
+
+              <button
+                className="primary big open-nmrnl"
+                disabled={busy !== null || code.length !== 6 || !workspaceId}
+              >
+                {busy === 'login' ? 'Checking code…' : 'Open NMRNL'}
+              </button>
+            </form>
+
+            <button
+              type="button"
+              className="email-recovery-button"
+              onClick={() => {
+                setRecovery(true);
+                setCode('');
+                setError('');
+              }}
+            >
+              <span>↻</span>
               <span>
-                <strong>NMRNL workspace saved</strong>
-                <small>{workspaceId.slice(0, 4)}••••••••{workspaceId.slice(-4)}</small>
+                <strong>Can’t access Google Authenticator?</strong>
+                <small>Recover the workspace through the Maleroom account</small>
               </span>
-            </div>
-          )}
-
-          <label className="code-prompt">
-            <span>Authenticator code</span>
-            <input
-              className="totp-input login-code"
-              value={code}
-              onChange={(event) => updateCode(event.target.value)}
-              placeholder="000000"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              maxLength={6}
-              autoFocus={hasRememberedWorkspace}
-              aria-label="6-digit Google Authenticator code"
-            />
-          </label>
-
+            </button>
+          </>
+        ) : !accountLoading ? (
           <button
-            className="primary big open-nmrnl"
-            disabled={
-              busy !== null ||
-              code.length !== 6 ||
-              workspaceId.trim().length !== 16
-            }
-          >
-            {busy === 'login' ? 'Checking code…' : 'Open NMRNL'}
-          </button>
-        </form>
-
-        <button
-          type="button"
-          className="email-recovery-button"
-          onClick={() => {
-            setRecovery(true);
-            setCode('');
-            setError('');
-          }}
-        >
-          <span>↻</span>
-          <span>
-            <strong>Lost Google Authenticator?</strong>
-            <small>Reset it using your Cloudflare-verified email identity</small>
-          </span>
-        </button>
-
-        {rememberedWorkspaceId && (
-          <button
+            className="primary big"
             type="button"
-            className="switch-workspace-button"
-            onClick={() => {
-              setShowWorkspaceField((value) => !value);
-              setCode('');
-              setError('');
-            }}
+            onClick={() => void create()}
+            disabled={busy !== null}
           >
-            {showWorkspaceField ? 'Use saved workspace' : 'Use a different workspace'}
+            {busy === 'create' ? 'Creating…' : 'Create Maleroom workspace'}
           </button>
-        )}
-
-        <div className="setup-divider"><span>new workspace</span></div>
-
-        <button
-          className="secondary big create-secondary"
-          type="button"
-          onClick={() => void create()}
-          disabled={busy !== null}
-        >
-          {busy === 'create' ? 'Creating…' : 'Create private workspace'}
-        </button>
+        ) : null}
       </section>
     </main>
   );

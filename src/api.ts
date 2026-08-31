@@ -121,6 +121,23 @@ async function workspaceRequest<T>(
   });
 }
 
+export async function fetchAccountWorkspace(): Promise<{
+  workspaceId: string;
+  exists: boolean;
+  authenticatorEnabled: boolean;
+}> {
+  const response = await fetch('/api/account/workspace', {
+    method: 'GET',
+    cache: 'no-store',
+  });
+
+  return parseResponse<{
+    workspaceId: string;
+    exists: boolean;
+    authenticatorEnabled: boolean;
+  }>(response);
+}
+
 export async function createWorkspace(): Promise<WorkspaceSetupChallenge> {
   const response = await fetch('/api/workspace', {
     method: 'POST',

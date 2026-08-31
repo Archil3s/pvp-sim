@@ -247,6 +247,15 @@ function sessionList(meta) {
     .slice(-9);
 }
 
+async function accountWorkspaceId() {
+  const bytes = new TextEncoder().encode('nmrnl-account:' + ACCOUNT_EMAIL.toLowerCase());
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)]
+    .slice(0, 8)
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 async function approvedAccessEmail(request, ctx) {
   let email = '';
 
@@ -841,6 +850,15 @@ export class SupervisorHub {
         return this.initialise(request);
       }
 
+      if (suffix === '/account/status' && request.method === 'GET') {
+        const meta = await this.getMeta();
+        return json({
+          exists: Boolean(meta),
+          workspaceId: meta?.workspaceId || workspaceMatch[1].toLowerCase(),
+          authenticatorEnabled: Boolean(meta?.totpEnabled),
+        });
+      }
+
       if (suffix === '/auth/confirm' && request.method === 'POST') {
         return this.confirmInitialAuthenticator(request);
       }
@@ -948,8 +966,19 @@ export default {
       });
     }
 
+    if (url.pathname === '/api/account/workspace' && request.method === 'GET') {
+      const workspaceId = await accountWorkspaceId();
+      const objectId = env.SUPERVISOR_HUB.idFromName('nmrnl:' + workspaceId);
+      const stub = env.SUPERVISOR_HUB.get(objectId);
+      return stub.fetch(
+        new Request(url.origin + '/api/workspace/' + workspaceId + '/account/status', {
+          method: 'GET',
+        }),
+      );
+    }
+
     if (url.pathname === '/api/workspace' && request.method === 'POST') {
-      const workspaceId = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
+      const workspaceId = await accountWorkspaceId();
       const totpSecret = generateTotpSecret();
       const objectId = env.SUPERVISOR_HUB.idFromName('nmrnl:' + workspaceId);
       const stub = env.SUPERVISOR_HUB.get(objectId);
@@ -966,6 +995,16 @@ export default {
 
       const initialised = await stub.fetch(initRequest);
       if (!initialised.ok) {
+        if (initialised.status === 409) {
+          return json(
+            {
+              error:
+                'The Maleroom account already has an NMRNL workspace. Sign in instead.',
+              workspaceId,
+            },
+            { status: 409 },
+          );
+        }
         return json(
           { error: 'Could not initialise NMRNL workspace.' },
           { status: 500 },
