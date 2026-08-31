@@ -1,12 +1,31 @@
-# Codex Supervisor Dashboard
+# NMRNL
 
-Cloudflare-hosted live viewer for the DD Skiller Codex supervisor.
+Cloudflare-native rebuild of `Archil3s/support_worker_log`.
 
-The old WebGL PvP simulator has been removed. The site now shows live Codex agent status, model routing, terminal output, Git changes, `CODEX_PROGRESS.md`, `CODEX_HANDOFF.md`, and verification results streamed by the local Windows supervisor.
+This repository was previously the `pvp-sim` / Codex Supervisor Cloudflare project. The pre-NMRNL state is preserved on:
+
+`archive/pvp-sim-before-nmrnl`
+
+## Direction
+
+NMRNL will port the useful workflows from Support Worker Log into a web-first Cloudflare application:
+
+- Quick Entry
+- Work / PAYE / casework modes
+- Clients and entries
+- Support notes and follow-up actions
+- Calendar and reporting
+- Pay-period / invoice helpers
+- Personal modules where they still make sense
+- Google Drive / Calendar integration in later slices
 
 ## Cloudflare
 
-The Worker creates private telemetry sessions at `POST /api/session`. Each session uses a Durable Object and has separate write and viewer tokens. Static Vite assets and the API deploy together through `wrangler.jsonc`.
+The existing Vite + Cloudflare Worker deployment structure is retained so the current Git-connected Cloudflare project can be reused.
+
+The Worker service name is now `nmrnl`.
+
+Initial persistence uses a Durable Object with SQLite-backed storage. That avoids introducing an unconfigured D1 database during the first deployment. We can split larger datasets into D1/R2 once the core port is stable.
 
 ## Build
 
@@ -14,5 +33,3 @@ The Worker creates private telemetry sessions at `POST /api/session`. Each sessi
 npm install
 npm run build
 ```
-
-The existing Cloudflare Git deployment can continue using this repository. The Worker entry point is `worker/index.js` and static assets are emitted to `dist/`.
