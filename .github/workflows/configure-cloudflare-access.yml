@@ -1,4 +1,5 @@
 name: Configure Cloudflare Access
+# trigger: secrets-ready
 
 on:
   workflow_dispatch:
