@@ -288,10 +288,28 @@ export function ensureStructuredSupportNote(noteText: string): string {
   const sections = parseStructuredSupportNote(STRUCTURED_SUPPORT_NOTE_TEMPLATE);
   sections['What happened'] = trimmed;
 
+  return buildStructuredSupportNote(sections);
+}
+
+export function buildStructuredSupportNote(
+  sections: Record<StructuredSupportHeading, string>,
+): string {
   return CANONICAL_HEADINGS.map((heading) => {
     const body = sections[heading].trim();
     return body ? heading + '\n' + body : heading;
   }).join('\n\n');
+}
+
+export function updateStructuredSupportSection(
+  noteText: string,
+  heading: StructuredSupportHeading,
+  value: string,
+): string {
+  const sections = parseStructuredSupportNote(
+    ensureStructuredSupportNote(noteText),
+  );
+  sections[heading] = value;
+  return buildStructuredSupportNote(sections);
 }
 
 export function insertSupportNoteTemplate(
@@ -310,10 +328,7 @@ export function insertSupportNoteTemplate(
     const existing = sections.Referrals.trim();
     sections.Referrals = [existing, detail].filter(Boolean).join('\n\n');
 
-    return CANONICAL_HEADINGS.map((heading) => {
-      const body = sections[heading].trim();
-      return body ? heading + '\n' + body : heading;
-    }).join('\n\n');
+    return buildStructuredSupportNote(sections);
   }
 
   const sections = parseStructuredSupportNote(base);

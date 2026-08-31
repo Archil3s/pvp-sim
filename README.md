@@ -48,6 +48,8 @@ The pre-NMRNL state of this repository is preserved on:
 - Google Drive support-note Docs now use the gold-standard reporting template instead of a generic note layout
 - Dedicated Notes workspace for creating a support note from any Work entry, with missing-note-first ordering, status filters and Drive links
 - Explicit Create Note actions on Home, Entries, Admin Review and the timed-visit saved screen
+- Template-first note editor: existing saved notes reopen inside the actual reporting template with their content mapped back into editable Attendance, Main topic, Outcome, Overall impression and Next actions fields
+- Raw-note tab remains available for advanced editing while preserving the structured template
 - Mobile + desktop navigation
 
 ## Temporary build access

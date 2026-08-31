@@ -80,6 +80,9 @@ import {
   goldStandardTemplateContent,
   goldStandardTemplatePlainText,
   insertSupportNoteTemplate,
+  ensureStructuredSupportNote,
+  parseStructuredSupportNote,
+  updateStructuredSupportSection,
   supportNoteHasEnteredContent,
 } from './supportNoteTemplate';
 
@@ -137,6 +140,218 @@ function supportNoteStatusLabel(status: SupportNoteStatus): string {
 
 function hasSupportNoteContent(noteText: string): boolean {
   return supportNoteHasEnteredContent(noteText);
+}
+
+function GoldStandardNoteTemplateEditor({
+  entry,
+  personName,
+  noteText,
+  onChange,
+  disabled = false,
+}: {
+  entry: WorkEntry;
+  personName: string;
+  noteText: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  const structured = ensureStructuredSupportNote(noteText);
+  const sections = parseStructuredSupportNote(structured);
+  const content = goldStandardTemplateContent(entry, personName, structured);
+  const counts = content.wordCounts;
+
+  const update = (
+    heading:
+      | 'Attendance'
+      | 'What happened'
+      | 'Work/task completed'
+      | 'Support given'
+      | 'Issue/problem'
+      | 'Outcome'
+      | 'Next step'
+      | 'Anything to follow up'
+      | 'Referrals',
+    value: string,
+  ) => {
+    onChange(updateStructuredSupportSection(structured, heading, value));
+  };
+
+  return (
+    <div className="gold-template-editor">
+      <div className="gold-template-paper">
+        <div className="gold-template-title">
+          <h3>Template for reporting of interactions with survivors.</h3>
+          <p>
+            This template is aimed at providing information in a format that
+            meets the requirements of the Ministry of Social Development.
+          </p>
+        </div>
+
+        <div className="gold-template-meta">
+          <div>
+            <span>Geographical area.</span>
+            <strong>Blenheim</strong>
+          </div>
+          <div>
+            <span>Name of client.</span>
+            <strong>{personName.trim() || entry.client}</strong>
+          </div>
+          <div>
+            <span>Date:</span>
+            <strong>{content.date}</strong>
+          </div>
+        </div>
+
+        <section className="gold-template-section">
+          <div className="gold-template-section-head">
+            <h4>Date/time/length of interaction</h4>
+            <small>Auto-filled from the Work entry</small>
+          </div>
+          <div className="gold-template-auto">
+            {entryType(entry.type).label} · {entry.startTime} · {entry.minutes} minutes
+          </div>
+          <label>
+            <span>Attendance</span>
+            <textarea
+              rows={3}
+              value={sections.Attendance}
+              onChange={(event) => update('Attendance', event.target.value)}
+              disabled={disabled}
+              placeholder="Who was present / attendance detail"
+            />
+          </label>
+        </section>
+
+        <section className="gold-template-section">
+          <div className="gold-template-section-head">
+            <h4>Main topic(s)</h4>
+            <small className={counts.mainTopics > GOLD_STANDARD_LIMITS.mainTopics ? 'over' : ''}>
+              {counts.mainTopics}/{GOLD_STANDARD_LIMITS.mainTopics} words
+            </small>
+          </div>
+          <label>
+            <span>What happened</span>
+            <textarea
+              rows={5}
+              value={sections['What happened']}
+              onChange={(event) => update('What happened', event.target.value)}
+              disabled={disabled}
+              placeholder="What happened during the interaction?"
+            />
+          </label>
+          <label>
+            <span>Work/task completed</span>
+            <textarea
+              rows={4}
+              value={sections['Work/task completed']}
+              onChange={(event) =>
+                update('Work/task completed', event.target.value)
+              }
+              disabled={disabled}
+              placeholder="What work or practical task was completed?"
+            />
+          </label>
+        </section>
+
+        <section className="gold-template-section">
+          <div className="gold-template-section-head">
+            <h4>Outcome(s)</h4>
+            <small className={counts.outcomes > GOLD_STANDARD_LIMITS.outcomes ? 'over' : ''}>
+              {counts.outcomes}/{GOLD_STANDARD_LIMITS.outcomes} words
+            </small>
+          </div>
+          <label>
+            <span>Outcome</span>
+            <textarea
+              rows={4}
+              value={sections.Outcome}
+              onChange={(event) => update('Outcome', event.target.value)}
+              disabled={disabled}
+              placeholder="What was the result or outcome?"
+            />
+          </label>
+        </section>
+
+        <section className="gold-template-section">
+          <div className="gold-template-section-head">
+            <h4>Overall impression</h4>
+            <small
+              className={
+                counts.overallImpression >
+                GOLD_STANDARD_LIMITS.overallImpression
+                  ? 'over'
+                  : ''
+              }
+            >
+              {counts.overallImpression}/
+              {GOLD_STANDARD_LIMITS.overallImpression} words
+            </small>
+          </div>
+          <label>
+            <span>Support given</span>
+            <textarea
+              rows={4}
+              value={sections['Support given']}
+              onChange={(event) => update('Support given', event.target.value)}
+              disabled={disabled}
+              placeholder="What support was provided?"
+            />
+          </label>
+          <label>
+            <span>Issue/problem</span>
+            <textarea
+              rows={4}
+              value={sections['Issue/problem']}
+              onChange={(event) => update('Issue/problem', event.target.value)}
+              disabled={disabled}
+              placeholder="Issues, barriers, concerns or risks"
+            />
+          </label>
+        </section>
+
+        <section className="gold-template-section">
+          <div className="gold-template-section-head">
+            <h4>Next actions</h4>
+            <small className={counts.nextActions > GOLD_STANDARD_LIMITS.nextActions ? 'over' : ''}>
+              {counts.nextActions}/{GOLD_STANDARD_LIMITS.nextActions} words
+            </small>
+          </div>
+          <label>
+            <span>Next step</span>
+            <textarea
+              rows={4}
+              value={sections['Next step']}
+              onChange={(event) => update('Next step', event.target.value)}
+              disabled={disabled}
+              placeholder="What happens next?"
+            />
+          </label>
+          <label>
+            <span>Anything to follow up</span>
+            <textarea
+              rows={3}
+              value={sections['Anything to follow up']}
+              onChange={(event) =>
+                update('Anything to follow up', event.target.value)
+              }
+              disabled={disabled}
+              placeholder="Anything that needs follow-up"
+            />
+          </label>
+          <label>
+            <span>Referrals</span>
+            <textarea
+              rows={4}
+              value={sections.Referrals}
+              onChange={(event) => update('Referrals', event.target.value)}
+              disabled={disabled}
+              placeholder="Referrals made, discussed, declined or pending"
+            />
+          </label>
+        </section>
+      </div>
+    </div>
+  );
 }
 
 function SupportNoteTemplateTools({
@@ -1332,8 +1547,10 @@ function FinishActiveVisitModal({
 }) {
   const isText = activeVisit.type === 'textNote';
   const [supportNote, setSupportNote] = useState(
-    activeVisit.supportNoteDraft.trim() ||
-      supportNoteFromVisitNotes(visitLines(notesText)),
+    ensureStructuredSupportNote(
+      activeVisit.supportNoteDraft.trim() ||
+        supportNoteFromVisitNotes(visitLines(notesText)),
+    ),
   );
   const [summary, setSummary] = useState(
     activeVisit.textSummaryDraft.trim() || visitLines(notesText).join('\n'),
@@ -1526,15 +1743,28 @@ function FinishActiveVisitModal({
               noteText={supportNote}
               onChange={setSupportNote}
             />
-            <label className="field">
-              <span>Support note breakdown</span>
-              <textarea
-                className="visit-closeout-note"
-                rows={18}
-                value={supportNote}
-                onChange={(event) => setSupportNote(event.target.value)}
-              />
-            </label>
+            <GoldStandardNoteTemplateEditor
+              entry={{
+                ...activeVisit,
+                id: activeVisit.id,
+                mode: 'work',
+                clientId: null,
+                minutes: elapsedVisitMinutes(activeVisit.startedAt),
+                notes: activeVisit.notes,
+                supportNoteBreakdown: supportNote,
+                nextActions: [],
+                googleCalendarEntered: false,
+                importantText: false,
+                textContactDirection: 'received',
+                textReplyNeeded: false,
+                odometerEnd: null,
+                createdAt: activeVisit.startedAt,
+                updatedAt: activeVisit.updatedAt,
+              }}
+              personName={activeVisit.client}
+              noteText={supportNote}
+              onChange={setSupportNote}
+            />
           </>
         )}
 
@@ -1597,7 +1827,7 @@ function QuickEntryScreen({
   const [startTime, setStartTime] = useState(localTimeValue());
   const [minutes, setMinutes] = useState(60);
   const [notes, setNotes] = useState('');
-  const [supportNote, setSupportNote] = useState('');
+  const [supportNote, setSupportNote] = useState(SUPPORT_NOTE_TEMPLATE);
   const [nextAction, setNextAction] = useState('');
   const [importantText, setImportantText] = useState(false);
   const [direction, setDirection] = useState<TextContactDirection>('received');
@@ -2268,10 +2498,38 @@ function QuickEntryScreen({
               noteText={supportNote}
               onChange={setSupportNote}
             />
-            <label className="field">
-              <span>Support note breakdown</span>
-              <textarea rows={9} value={supportNote} onChange={(event) => setSupportNote(event.target.value)} placeholder={SUPPORT_NOTE_TEMPLATE} />
-            </label>
+            <GoldStandardNoteTemplateEditor
+              entry={{
+                id: 'manual-preview',
+                mode,
+                clientId: null,
+                client: client.trim() || fallbackClient(),
+                type,
+                date,
+                startTime,
+                minutes,
+                notes: visitLines(notes),
+                supportNoteBreakdown: supportNote,
+                nextActions: [],
+                googleCalendarEntered: false,
+                importantText,
+                textContactDirection: direction,
+                textReplyNeeded: replyNeeded,
+                odometerStart:
+                  type === 'homeVisit' && odometerStart.trim()
+                    ? Number(odometerStart)
+                    : null,
+                odometerEnd:
+                  type === 'homeVisit' && odometerEnd.trim()
+                    ? Number(odometerEnd)
+                    : null,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              }}
+              personName={client.trim() || fallbackClient()}
+              noteText={supportNote}
+              onChange={setSupportNote}
+            />
           </div>
         </div>
       </Panel>
@@ -2587,8 +2845,11 @@ function SupportNoteModal({
     entry.supportNotePersonName?.trim() || entry.client,
   );
   const [noteText, setNoteText] = useState(
-    entry.supportNoteBreakdown.trim() || SUPPORT_NOTE_TEMPLATE,
+    ensureStructuredSupportNote(
+      entry.supportNoteBreakdown.trim() || SUPPORT_NOTE_TEMPLATE,
+    ),
   );
+  const [editorMode, setEditorMode] = useState<'template' | 'raw'>('template');
   const [status, setStatus] = useState<SupportNoteStatus>(
     supportNoteStatus(entry),
   );
@@ -2727,6 +2988,23 @@ function SupportNoteModal({
           </div>
         </div>
 
+        <div className="note-editor-switch">
+          <button
+            type="button"
+            className={editorMode === 'template' ? 'active' : ''}
+            onClick={() => setEditorMode('template')}
+          >
+            Template
+          </button>
+          <button
+            type="button"
+            className={editorMode === 'raw' ? 'active' : ''}
+            onClick={() => setEditorMode('raw')}
+          >
+            Raw note
+          </button>
+        </div>
+
         <SupportNoteTemplateTools
           entry={entry}
           personName={personName}
@@ -2734,16 +3012,30 @@ function SupportNoteModal({
           onChange={setNoteText}
         />
 
-        <label className="field support-note-editor">
-          <span>Support worker note</span>
-          <textarea
-            value={noteText}
-            onChange={(event) => setNoteText(event.target.value)}
+        {editorMode === 'template' ? (
+          <GoldStandardNoteTemplateEditor
+            entry={entry}
+            personName={personName}
+            noteText={noteText}
+            onChange={setNoteText}
             disabled={saving}
-            spellCheck
-            rows={18}
           />
-        </label>
+        ) : (
+          <label className="field support-note-editor">
+            <span>Support worker note</span>
+            <textarea
+              value={noteText}
+              onChange={(event) =>
+                setNoteText(
+                  ensureStructuredSupportNote(event.target.value),
+                )
+              }
+              disabled={saving}
+              spellCheck
+              rows={18}
+            />
+          </label>
+        )}
 
         <div className="support-note-summary">
           <span>
