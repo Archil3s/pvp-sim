@@ -2,6 +2,13 @@ name: Configure Cloudflare Access
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/configure-cloudflare-access.yml"
+      - "cloudflare/access.config.json"
+      - "scripts/configure-cloudflare-access.mjs"
 
 permissions:
   contents: read
