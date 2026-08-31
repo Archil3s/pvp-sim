@@ -31,6 +31,12 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build NMRNL
+        run: npm run build
+
       - name: Validate Cloudflare secrets
         shell: bash
         env:
@@ -64,12 +70,6 @@ jobs:
           fi
 
           echo "Cloudflare API token verified successfully."
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build NMRNL
-        run: npm run build
 
       - name: Deploy Worker with Wrangler 4
         shell: bash
