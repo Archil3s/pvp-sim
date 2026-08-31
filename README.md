@@ -40,6 +40,8 @@ The pre-NMRNL state of this repository is preserved on:
 - Active-visit odometer capture, draft notes and structured support-note/text close-out
 - Active Visit survives refresh/device changes because the running visit is stored in the Durable Object
 - Finished timed visits create normal Work entries, billable time, next actions and Calendar-ready records
+- Work dashboard parity with Today + Current Fortnight totals, admin health, quick actions and last-entry summary
+- Monthly Work summary with contact-type totals, unfinished-note/action counts and iOS Share Sheet support
 - Mobile + desktop navigation
 
 ## Temporary build access
@@ -116,7 +118,7 @@ After the Worker is renamed to `nmrnl` in the Cloudflare dashboard, update the W
 
 ## Next port slices
 
-- Remaining Work dashboard polish and deeper Drive sync
+- Deeper Drive sync and note-folder reconciliation
 
 
 ## Google Drive runtime configuration

@@ -678,42 +678,170 @@ function HomeScreen({
   mode: Mode;
   go: (section: Section) => void;
 }) {
+  const [shareMessage, setShareMessage] = useState('');
   const entries = state.entries.filter((entry) => entry.mode === mode);
   const actions = state.actions.filter((action) => action.mode === mode);
-  const recentEntries = [...entries]
-    .sort((left, right) =>
-      (right.date + right.startTime).localeCompare(left.date + left.startTime),
-    )
-    .slice(0, 6);
+  const sortedEntries = [...entries].sort((left, right) =>
+    (right.date + right.startTime).localeCompare(left.date + left.startTime),
+  );
+  const lastEntry = sortedEntries[0] || null;
+  const recentEntries = sortedEntries.slice(0, 5);
 
-  const minutes = entries.reduce((total, entry) => total + entry.minutes, 0);
-  const kilometres = entries.reduce(
-    (total, entry) => total + entryKilometres(entry),
+  const todayKey = localDateValue();
+  const todayEntries = entries.filter((entry) => entry.date === todayKey);
+  const todayHours = todayEntries.reduce(
+    (sum, entry) => sum + entryBillableHours(entry),
     0,
   );
+  const todayEarnings = todayEntries.reduce(
+    (sum, entry) => sum + entryEarnings(entry, state.settings.hourlyRate),
+    0,
+  );
+  const todayKm = todayEntries.reduce(
+    (sum, entry) => sum + entryKilometres(entry),
+    0,
+  );
+
+  const periodStart = fortnightStartFor(
+    new Date(),
+    state.settings.payPeriodAnchorDate,
+  );
+  const periodEnd = addCalendarDays(periodStart, 13);
+  const periodStartKey = localDateValue(periodStart);
+  const periodEndKey = localDateValue(periodEnd);
+  const periodEntries = entries.filter(
+    (entry) => entry.date >= periodStartKey && entry.date <= periodEndKey,
+  );
+  const periodHours = periodEntries.reduce(
+    (sum, entry) => sum + entryBillableHours(entry),
+    0,
+  );
+  const periodEarnings = periodEntries.reduce(
+    (sum, entry) => sum + entryEarnings(entry, state.settings.hourlyRate),
+    0,
+  );
+  const periodKm = periodEntries.reduce(
+    (sum, entry) => sum + entryKilometres(entry),
+    0,
+  );
+  const periodMissingNotes = periodEntries.filter(
+    (entry) => !hasSupportNoteContent(entry.supportNoteBreakdown),
+  ).length;
+  const periodCalendarGaps = periodEntries.filter(
+    (entry) => !entry.googleCalendarEntered,
+  ).length;
+
   const visitActions = entries.flatMap((entry) =>
     entry.nextActions.filter((action) => !action.completedAt),
   ).length;
   const generalActions = actions.filter((action) => !action.completedAt).length;
 
-  const lastSevenDays = entries.filter((entry) => {
-    const time = new Date(entry.date + 'T12:00:00').getTime();
-    return time >= todayStart() - 6 * 86_400_000;
-  }).length;
+  const now = new Date();
+  const monthEntries = entries.filter((entry) => {
+    const parsed = new Date(entry.date + 'T12:00:00');
+    return (
+      parsed.getFullYear() === now.getFullYear() &&
+      parsed.getMonth() === now.getMonth()
+    );
+  });
+  const monthHours = monthEntries.reduce(
+    (sum, entry) => sum + entryBillableHours(entry),
+    0,
+  );
+  const monthEarnings = monthEntries.reduce(
+    (sum, entry) => sum + entryEarnings(entry, state.settings.hourlyRate),
+    0,
+  );
+  const monthKm = monthEntries.reduce(
+    (sum, entry) => sum + entryKilometres(entry),
+    0,
+  );
+  const monthMissingNotes = monthEntries.filter(
+    (entry) => !hasSupportNoteContent(entry.supportNoteBreakdown),
+  ).length;
+  const monthOpenEntryActions = monthEntries.reduce(
+    (sum, entry) =>
+      sum + entry.nextActions.filter((action) => !action.completedAt).length,
+    0,
+  );
+  const monthLabel = now.toLocaleDateString(undefined, {
+    month: 'long',
+    year: 'numeric',
+  });
+
+  const monthByType = ENTRY_TYPES.map((definition) => ({
+    ...definition,
+    count: monthEntries.filter((entry) => entry.type === definition.key).length,
+  })).filter((item) => item.count > 0);
+
+  const shareMonthSummary = async () => {
+    const typeLines = monthByType.length
+      ? monthByType.map((item) => item.label + ': ' + item.count).join('\n')
+      : 'No Work entries yet';
+
+    const summary = [
+      'Work totals - ' + monthLabel,
+      'Total entries: ' + monthEntries.length,
+      'Billable hours: ' + monthHours.toFixed(2),
+      'Earnings: ' + money(monthEarnings),
+      'Travel: ' + monthKm.toFixed(1) + ' km',
+      '',
+      'Contact type totals',
+      typeLines,
+      '',
+      'Notes to finish: ' + monthMissingNotes,
+      'Open actions: ' + (monthOpenEntryActions + generalActions),
+    ].join('\n');
+
+    setShareMessage('');
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: 'NMRNL Work totals - ' + monthLabel,
+          text: summary,
+        });
+        setShareMessage('Work summary shared.');
+        return;
+      }
+
+      await navigator.clipboard.writeText(summary);
+      setShareMessage('Work summary copied.');
+    } catch (reason) {
+      if (
+        reason instanceof DOMException &&
+        reason.name === 'AbortError'
+      ) {
+        return;
+      }
+      setShareMessage('Could not share the Work summary.');
+    }
+  };
 
   return (
     <div className="page-stack">
-      <section className="hero-card">
+      <section className="hero-card work-home-hero">
         <div>
           <div className="eyebrow">WORK</div>
-          <h2>Everything important, without the paperwork sprawl.</h2>
+          <h2>
+            {state.activeVisit
+              ? 'Your visit is running.'
+              : todayEntries.length
+                ? 'Today is underway.'
+                : 'Ready for the next visit.'}
+          </h2>
           <p>
-            Capture work quickly, keep support-note detail attached to the record,
-            and surface follow-ups before they get lost.
+            {state.activeVisit
+              ? state.activeVisit.client +
+                ' · ' +
+                entryType(state.activeVisit.type).label +
+                ' · started ' +
+                state.activeVisit.startTime
+              : 'Start a timed visit, review today, and keep admin from building up.'}
           </p>
         </div>
         <button className="primary hero-action" onClick={() => go('quick')}>
-          + Quick entry
+          {state.activeVisit ? 'Open visit' : '▶ Start / Finish Visit'}
         </button>
       </section>
 
@@ -730,66 +858,226 @@ function HomeScreen({
         </button>
       )}
 
-      <div className="stat-grid">
-        <StatCard label="Entries" value={String(entries.length)} detail={lastSevenDays + ' in last 7 days'} />
-        <StatCard label="Hours" value={formatHours(minutes)} detail="recorded time" />
-        <StatCard label="Open actions" value={String(visitActions + generalActions)} detail={visitActions + ' from visits'} />
-        <StatCard label="Travel" value={kilometres.toFixed(1) + ' km'} detail="home visits" />
-      </div>
+      <Panel title="Today" subtitle={formatDate(todayKey)}>
+        <div className="stat-grid compact-stats dashboard-period-stats">
+          <StatCard label="Entries" value={String(todayEntries.length)} />
+          <StatCard label="Billable hours" value={todayHours.toFixed(2)} />
+          <StatCard label="Earned" value={money(todayEarnings)} />
+          <StatCard label="KM" value={todayKm.toFixed(1)} />
+        </div>
+      </Panel>
 
-      <div className="dashboard-grid">
+      <Panel
+        title="Current Fortnight"
+        subtitle={formatDate(periodStartKey) + ' – ' + formatDate(periodEndKey)}
+        action={
+          <button className="text-button" onClick={() => go('payPeriod')}>
+            Open pay period
+          </button>
+        }
+      >
+        <div className="stat-grid compact-stats dashboard-period-stats">
+          <StatCard label="Entries" value={String(periodEntries.length)} />
+          <StatCard label="Billable hours" value={periodHours.toFixed(2)} />
+          <StatCard label="Earned" value={money(periodEarnings)} />
+          <StatCard label="KM" value={periodKm.toFixed(1)} />
+        </div>
+        <div className="dashboard-health-strip">
+          <button
+            className={periodMissingNotes ? 'needs-attention' : 'all-clear'}
+            onClick={() => go(periodMissingNotes ? 'entries' : 'adminReview')}
+          >
+            <span>Support notes</span>
+            <strong>
+              {periodMissingNotes
+                ? periodMissingNotes + ' to finish'
+                : 'All complete'}
+            </strong>
+          </button>
+          <button
+            className={periodCalendarGaps ? 'needs-attention' : 'all-clear'}
+            onClick={() => go('calendar')}
+          >
+            <span>Calendar</span>
+            <strong>
+              {periodCalendarGaps
+                ? periodCalendarGaps + ' to enter'
+                : 'All entered'}
+            </strong>
+          </button>
+          <button
+            className={visitActions + generalActions ? 'needs-attention' : 'all-clear'}
+            onClick={() => go('actions')}
+          >
+            <span>Actions</span>
+            <strong>
+              {visitActions + generalActions
+                ? visitActions + generalActions + ' open'
+                : 'All clear'}
+            </strong>
+          </button>
+        </div>
+      </Panel>
+
+      <Panel title="Quick Actions">
+        <div className="dashboard-quick-actions">
+          <button className="primary" onClick={() => go('quick')}>
+            <span>▶</span>
+            <strong>{state.activeVisit ? 'Open Active Visit' : 'Start / Finish Visit'}</strong>
+          </button>
+          <button className="secondary" onClick={() => go('adminReview')}>
+            <span>◎</span>
+            <strong>Admin Review</strong>
+          </button>
+          <button className="secondary" onClick={() => go('payPeriod')}>
+            <span>◫</span>
+            <strong>View Pay Period</strong>
+          </button>
+          <button className="secondary" onClick={() => go('entries')}>
+            <span>▤</span>
+            <strong>View Entries</strong>
+          </button>
+        </div>
+      </Panel>
+
+      <div className="dashboard-grid dashboard-main-grid">
         <Panel
-          title="Recent entries"
-          subtitle="Latest recorded activity"
+          title="Last Entry"
           action={
-            <button className="text-button" onClick={() => go('entries')}>
-              View all
-            </button>
+            lastEntry ? (
+              <button className="text-button" onClick={() => go('entries')}>
+                Open entries
+              </button>
+            ) : undefined
           }
         >
-          {recentEntries.length === 0 ? (
+          {lastEntry == null ? (
             <EmptyState
               title="No entries yet"
-              detail="Your first Quick Entry will appear here."
-              action={<button className="primary" onClick={() => go('quick')}>Create entry</button>}
+              detail="Start your first Work visit and it will appear here."
+              action={
+                <button className="primary" onClick={() => go('quick')}>
+                  Start visit
+                </button>
+              }
             />
           ) : (
-            <div className="compact-list">
-              {recentEntries.map((entry) => (
-                <EntryRow key={entry.id} entry={entry} />
-              ))}
+            <div className="last-entry-card">
+              <div className="last-entry-icon">{entryType(lastEntry.type).icon}</div>
+              <div className="last-entry-main">
+                <strong>{lastEntry.client}</strong>
+                <span>
+                  {entryType(lastEntry.type).label} · {formatDate(lastEntry.date)} · {lastEntry.minutes} min
+                </span>
+                <div className="last-entry-chips">
+                  <b>{entryBillableHours(lastEntry).toFixed(2)} billable h</b>
+                  <b>{money(entryEarnings(lastEntry, state.settings.hourlyRate))}</b>
+                  {lastEntry.type === 'homeVisit' && (
+                    <b>{entryKilometres(lastEntry).toFixed(1)} km</b>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </Panel>
 
         <Panel
-          title="Action queue"
-          subtitle="Outstanding follow-ups"
+          title="Work Admin"
+          subtitle="What still needs your attention"
           action={
-            <button className="text-button" onClick={() => go('actions')}>
-              Open actions
+            <button className="text-button" onClick={() => go('adminReview')}>
+              Review all
             </button>
           }
         >
-          <div className="action-summary">
-            <div>
-              <strong>{visitActions}</strong>
-              <span>Visit actions</span>
-            </div>
-            <div>
-              <strong>{generalActions}</strong>
-              <span>Other actions</span>
-            </div>
-          </div>
-          <div className="mini-callout">
-            <span className="mini-callout-icon">✓</span>
-            <div>
-              <strong>Keep the next step visible</strong>
-              <p>Add a follow-up while creating an entry and it lands in Actions automatically.</p>
-            </div>
+          <div className="dashboard-admin-list">
+            <button onClick={() => go('entries')}>
+              <span>Support notes</span>
+              <strong>{periodMissingNotes}</strong>
+            </button>
+            <button onClick={() => go('calendar')}>
+              <span>Calendar gaps</span>
+              <strong>{periodCalendarGaps}</strong>
+            </button>
+            <button onClick={() => go('actions')}>
+              <span>Open actions</span>
+              <strong>{visitActions + generalActions}</strong>
+            </button>
+            <button onClick={() => go('payPeriod')}>
+              <span>Google Drive</span>
+              <strong>{state.drive.rootFolderId ? 'Ready' : 'Set up'}</strong>
+            </button>
           </div>
         </Panel>
       </div>
+
+      <Panel
+        title={'This Month · ' + monthLabel}
+        subtitle="Work totals and contact mix"
+        action={
+          <button className="text-button" onClick={() => void shareMonthSummary()}>
+            Share summary
+          </button>
+        }
+      >
+        {shareMessage && (
+          <div className="dashboard-share-message">{shareMessage}</div>
+        )}
+        <div className="stat-grid compact-stats dashboard-period-stats">
+          <StatCard label="Entries" value={String(monthEntries.length)} />
+          <StatCard label="Billable hours" value={monthHours.toFixed(2)} />
+          <StatCard label="Earned" value={money(monthEarnings)} />
+          <StatCard label="KM" value={monthKm.toFixed(1)} />
+        </div>
+
+        <div className="month-contact-grid">
+          {monthByType.length === 0 ? (
+            <span className="muted-inline">No Work entries this month yet.</span>
+          ) : (
+            monthByType.map((item) => (
+              <div key={item.key}>
+                <span>{item.icon}</span>
+                <strong>{item.count}</strong>
+                <small>{item.shortLabel}</small>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="month-admin-summary">
+          <span>
+            <small>Notes to finish</small>
+            <strong>{monthMissingNotes}</strong>
+          </span>
+          <span>
+            <small>Open actions</small>
+            <strong>{monthOpenEntryActions + generalActions}</strong>
+          </span>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Recent Work"
+        subtitle="Latest recorded activity"
+        action={
+          <button className="text-button" onClick={() => go('entries')}>
+            View all
+          </button>
+        }
+      >
+        {recentEntries.length === 0 ? (
+          <EmptyState
+            title="Nothing recorded yet"
+            detail="Your recent Work entries will appear here."
+          />
+        ) : (
+          <div className="compact-list">
+            {recentEntries.map((entry) => (
+              <EntryRow key={entry.id} entry={entry} />
+            ))}
+          </div>
+        )}
+      </Panel>
 
       <Panel title="Work review" subtitle="Finish admin, then see the fortnight at a glance">
         <div className="home-work-tools">
