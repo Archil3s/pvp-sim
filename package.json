@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "cloudflare:access": "node scripts/configure-cloudflare-access.mjs"
   },
   "dependencies": {
     "react": "^19.1.1",

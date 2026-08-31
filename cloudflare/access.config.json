@@ -1,0 +1,13 @@
+{
+  "workerName": "pvp-sim",
+  "applicationName": "NMRNL",
+  "policyName": "NMRNL Owner",
+  "allowedEmail": "blenhiemmaleroom@gmail.com",
+  "sessionDuration": "24h",
+  "identityProviderName": "NMRNL One-time PIN",
+  "destinationType": "worker",
+  "autoRedirectToIdentity": true,
+  "allowAuthenticateViaWarp": false,
+  "appLauncherVisible": false,
+  "removeOtherApplicationPolicies": true
+}

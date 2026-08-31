@@ -34,18 +34,39 @@ Each NMRNL workspace is a separate Durable Object and is enrolled into a TOTP au
 
 A new browser signs in with the Workspace ID plus a current 6-digit Authenticator code. TOTP attempts are rate-limited inside the workspace Durable Object.
 
-NMRNL is additionally locked to one account/recovery email: `blenhiemmaleroom@gmail.com`. Recovery codes are never sent to any other address. If Authenticator access is lost, email recovery verifies a short-lived code and then forces a new Authenticator QR enrollment before access is restored.
+NMRNL is locked to the single approved account `blenhiemmaleroom@gmail.com`.
 
-Legacy owner-key workspaces can be upgraded in-place from the Workspace screen. Once the QR setup is confirmed, the old owner-token bypass is removed.
+## Cloudflare Access automation
 
-### Recovery email delivery
+Cloudflare Access is now managed from the repository.
 
-The recovery flow is implemented, but Cloudflare still needs an outbound sender configured. NMRNL supports either:
+The source of truth is:
 
-- a Worker email binding named `RECOVERY_EMAIL`, plus `RECOVERY_FROM_EMAIL`; or
-- Cloudflare Email Service REST credentials in `CLOUDFLARE_EMAIL_ACCOUNT_ID`, `CLOUDFLARE_EMAIL_API_TOKEN`, and `RECOVERY_FROM_EMAIL`.
+`cloudflare/access.config.json`
 
-The sender domain must be onboarded to Cloudflare Email Service. The destination is fixed in code to `blenhiemmaleroom@gmail.com` and cannot be changed through the UI.
+Run the GitHub Action:
+
+`Actions → Configure Cloudflare Access → Run workflow`
+
+It enforces:
+
+- Access application name `NMRNL`
+- Worker destination `pvp-sim`
+- production + preview protection
+- One-time PIN as the only identity provider
+- instant redirect to the OTP login
+- exact-email Allow policy for `blenhiemmaleroom@gmail.com`
+- removal of other application-specific policies from the NMRNL Access app
+- 24 hour Access session duration
+
+The workflow requires these GitHub Actions repository secrets:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
+
+See `cloudflare/README.md` for the one-time setup and required Cloudflare API token permissions.
+
+The temporary in-app custom recovery-email sender remains in the Worker until the Cloudflare Access identity flow is fully switched over. Do not configure `RECOVERY_FROM_EMAIL` just for Access setup.
 
 ## Cloudflare deployment name
 
@@ -55,6 +76,8 @@ After the Worker is renamed to `nmrnl` in the Cloudflare dashboard, update the W
 
 ## Next port slices
 
+- Cloudflare Access identity enforcement inside the Worker
+- Replace the temporary custom recovery-email sender
 - Entry editing
 - Full support-note editor
 - Calendar

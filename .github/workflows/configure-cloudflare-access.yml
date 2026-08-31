@@ -1,0 +1,44 @@
+name: Configure Cloudflare Access
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nmrnl-cloudflare-access
+  cancel-in-progress: false
+
+jobs:
+  configure-access:
+    name: Configure NMRNL Access
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+    steps:
+      - name: Check out NMRNL
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate Cloudflare secrets
+        shell: bash
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Missing GitHub Actions secret CLOUDFLARE_ACCOUNT_ID"
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Missing GitHub Actions secret CLOUDFLARE_API_TOKEN"
+            exit 1
+          fi
+
+      - name: Configure Cloudflare Access
+        run: node scripts/configure-cloudflare-access.mjs
