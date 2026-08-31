@@ -4262,3 +4262,142 @@ button.danger-button {
     gap: 2px;
   }
 }
+
+
+/* Dedicated Work support-note creation */
+
+.note-create-filter {
+  display: grid;
+  gap: 10px;
+}
+
+.note-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.note-filter-tabs button {
+  border: 1px solid #34405f;
+  border-radius: 999px;
+  background: #151c2b;
+  color: #8396c7;
+  padding: 7px 10px;
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.note-filter-tabs button.active {
+  border-color: #4f8df7;
+  background: #18335e;
+  color: #fff;
+}
+
+.note-create-list {
+  display: grid;
+  gap: 10px;
+}
+
+.note-create-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid #34405f;
+  border-radius: 16px;
+  background: #151b29;
+  padding: 13px;
+}
+
+.note-create-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #35588e;
+  border-radius: 50%;
+  background: #13294d;
+  color: #8bb5ff;
+  font-size: 20px;
+}
+
+.note-create-main {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.note-create-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.note-create-title h3 {
+  margin: 0 0 3px;
+  font-size: 14px;
+}
+
+.note-create-title p {
+  margin: 0;
+  color: #8396c7;
+  font-size: 10px;
+}
+
+.support-note-chip.static {
+  cursor: default;
+}
+
+.note-create-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.note-create-meta span {
+  border: 1px solid #2e3a56;
+  border-radius: 999px;
+  background: #1a2232;
+  color: #aebfe5;
+  padding: 5px 7px;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.note-create-preview {
+  max-height: 100px;
+  overflow: hidden;
+  margin: 0;
+  border-left: 2px solid #42659a;
+  color: #98a8ca;
+  padding-left: 9px;
+  white-space: pre-wrap;
+  font: inherit;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.note-create-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+@media (max-width: 620px) {
+  .note-create-card {
+    grid-template-columns: 1fr;
+  }
+
+  .note-create-icon {
+    display: none;
+  }
+
+  .note-create-title {
+    flex-direction: column;
+  }
+
+  .note-create-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+}

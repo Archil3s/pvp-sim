@@ -4,6 +4,7 @@ export type Section =
   | 'home'
   | 'quick'
   | 'entries'
+  | 'notes'
   | 'calendar'
   | 'payPeriod'
   | 'adminReview'

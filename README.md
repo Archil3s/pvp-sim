@@ -46,6 +46,8 @@ The pre-NMRNL state of this repository is preserved on:
 - Template word-limit guidance: Main topic 200, Outcome 100, Overall impression 150, Next actions 150
 - Reusable Structured Note, Referrals and Safety Concerns inserts in support-note, timed-visit and manual-entry flows
 - Google Drive support-note Docs now use the gold-standard reporting template instead of a generic note layout
+- Dedicated Notes workspace for creating a support note from any Work entry, with missing-note-first ordering, status filters and Drive links
+- Explicit Create Note actions on Home, Entries, Admin Review and the timed-visit saved screen
 - Mobile + desktop navigation
 
 ## Temporary build access

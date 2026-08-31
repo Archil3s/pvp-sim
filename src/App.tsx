@@ -998,7 +998,7 @@ function HomeScreen({
         <div className="dashboard-health-strip">
           <button
             className={periodMissingNotes ? 'needs-attention' : 'all-clear'}
-            onClick={() => go(periodMissingNotes ? 'entries' : 'adminReview')}
+            onClick={() => go(periodMissingNotes ? 'notes' : 'adminReview')}
           >
             <span>Support notes</span>
             <strong>
@@ -1037,6 +1037,10 @@ function HomeScreen({
           <button className="primary" onClick={() => go('quick')}>
             <span>▶</span>
             <strong>{state.activeVisit ? 'Open Active Visit' : 'Start / Finish Visit'}</strong>
+          </button>
+          <button className="secondary" onClick={() => go('notes')}>
+            <span>▧</span>
+            <strong>Create Note</strong>
           </button>
           <button className="secondary" onClick={() => go('adminReview')}>
             <span>◎</span>
@@ -1104,7 +1108,7 @@ function HomeScreen({
           }
         >
           <div className="dashboard-admin-list">
-            <button onClick={() => go('entries')}>
+            <button onClick={() => go('notes')}>
               <span>Support notes</span>
               <strong>{periodMissingNotes}</strong>
             </button>
@@ -1869,6 +1873,7 @@ function QuickEntryScreen({
           >
             ▦ Create Calendar Event
           </button>
+          <button className="secondary" onClick={() => go('notes')}>Create Support Note</button>
           <button className="secondary" onClick={() => go('entries')}>Open Entries</button>
           <button
             className="primary"
@@ -4513,7 +4518,7 @@ function AdminReviewScreen({
         empty="All entries have support-note detail."
         entries={missingNotes}
         renderActions={() => (
-          <button className="secondary compact" onClick={() => go('entries')}>Open entries</button>
+          <button className="secondary compact" onClick={() => go('notes')}>Create note</button>
         )}
       />
 
@@ -4547,16 +4552,271 @@ function AdminReviewScreen({
   );
 }
 
+function NotesScreen({
+  state,
+  credentials,
+  onState,
+  go,
+}: {
+  state: WorkspaceState;
+  credentials: WorkspaceCredentials;
+  onState: (state: WorkspaceState) => void;
+  go: (section: Section) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<
+    'all' | 'needsNote' | 'inProgress' | 'finished' | 'submitted'
+  >('all');
+  const [selected, setSelected] = useState<WorkEntry | null>(null);
+
+  const workEntries = useMemo(
+    () =>
+      [...state.entries]
+        .filter((entry) => entry.mode === 'work')
+        .sort((left, right) =>
+          (right.date + right.startTime).localeCompare(
+            left.date + left.startTime,
+          ),
+        ),
+    [state.entries],
+  );
+
+  const counts = {
+    needsNote: workEntries.filter(
+      (entry) => !hasSupportNoteContent(entry.supportNoteBreakdown),
+    ).length,
+    inProgress: workEntries.filter(
+      (entry) => supportNoteStatus(entry) === 'inProgress',
+    ).length,
+    finished: workEntries.filter(
+      (entry) => supportNoteStatus(entry) === 'finished',
+    ).length,
+    submitted: workEntries.filter(
+      (entry) => supportNoteStatus(entry) === 'submitted',
+    ).length,
+  };
+
+  const visibleEntries = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+
+    return workEntries
+      .filter((entry) => {
+        const status = supportNoteStatus(entry);
+        if (
+          filter === 'needsNote' &&
+          hasSupportNoteContent(entry.supportNoteBreakdown)
+        ) {
+          return false;
+        }
+        if (filter === 'inProgress' && status !== 'inProgress') return false;
+        if (filter === 'finished' && status !== 'finished') return false;
+        if (filter === 'submitted' && status !== 'submitted') return false;
+
+        if (!needle) return true;
+        return (
+          entry.client.toLowerCase().includes(needle) ||
+          entryType(entry.type).label.toLowerCase().includes(needle) ||
+          entry.supportNoteBreakdown.toLowerCase().includes(needle)
+        );
+      })
+      .sort((left, right) => {
+        const leftMissing = hasSupportNoteContent(left.supportNoteBreakdown)
+          ? 1
+          : 0;
+        const rightMissing = hasSupportNoteContent(right.supportNoteBreakdown)
+          ? 1
+          : 0;
+        if (leftMissing !== rightMissing) return leftMissing - rightMissing;
+        return (right.date + right.startTime).localeCompare(
+          left.date + left.startTime,
+        );
+      });
+  }, [workEntries, search, filter]);
+
+  return (
+    <div className="page-stack">
+      <section className="page-title">
+        <div>
+          <div className="eyebrow">WORK NOTES</div>
+          <h2>Create Support Note</h2>
+          <p>
+            Choose a Work entry, complete the gold-standard template, then save
+            it in NMRNL or create the Google Doc.
+          </p>
+        </div>
+        <button className="secondary" onClick={() => go('quick')}>
+          + New Work Entry
+        </button>
+      </section>
+
+      <div className="stat-grid compact-stats">
+        <StatCard label="Need note" value={String(counts.needsNote)} />
+        <StatCard label="In progress" value={String(counts.inProgress)} />
+        <StatCard label="Finished" value={String(counts.finished)} />
+        <StatCard label="Submitted" value={String(counts.submitted)} />
+      </div>
+
+      <Panel
+        title="Choose the Work entry"
+        subtitle="Entries needing a note are shown first."
+      >
+        <div className="note-create-filter">
+          <input
+            className="search-input"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search client or Work type…"
+          />
+          <div className="note-filter-tabs">
+            {[
+              ['all', 'All'],
+              ['needsNote', 'Need note'],
+              ['inProgress', 'In progress'],
+              ['finished', 'Finished'],
+              ['submitted', 'Submitted'],
+            ].map(([key, label]) => (
+              <button
+                type="button"
+                key={key}
+                className={filter === key ? 'active' : ''}
+                onClick={() =>
+                  setFilter(
+                    key as
+                      | 'all'
+                      | 'needsNote'
+                      | 'inProgress'
+                      | 'finished'
+                      | 'submitted',
+                  )
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </Panel>
+
+      {workEntries.length === 0 ? (
+        <Panel title="Support notes">
+          <EmptyState
+            title="No Work entries yet"
+            detail="Create or finish a Work entry first. The note template uses its client, date, time, type and duration automatically."
+            action={
+              <button className="primary" onClick={() => go('quick')}>
+                Create Work entry
+              </button>
+            }
+          />
+        </Panel>
+      ) : visibleEntries.length === 0 ? (
+        <Panel title="Support notes">
+          <EmptyState
+            title="No matching notes"
+            detail="Try another filter or search."
+          />
+        </Panel>
+      ) : (
+        <div className="note-create-list">
+          {visibleEntries.map((entry) => {
+            const status = supportNoteStatus(entry);
+            const hasNote = hasSupportNoteContent(entry.supportNoteBreakdown);
+            const driveMeta = state.driveSupportNotes[entry.id];
+
+            return (
+              <article className="note-create-card" key={entry.id}>
+                <div className="note-create-icon">
+                  {entryType(entry.type).icon}
+                </div>
+                <div className="note-create-main">
+                  <div className="note-create-title">
+                    <div>
+                      <h3>{entry.client}</h3>
+                      <p>
+                        {entryType(entry.type).label} · {formatDate(entry.date)} ·{' '}
+                        {entry.startTime} · {entry.minutes} min
+                      </p>
+                    </div>
+                    <span
+                      className={
+                        'support-note-chip static status-' + status
+                      }
+                    >
+                      {supportNoteStatusLabel(status)}
+                    </span>
+                  </div>
+
+                  <div className="note-create-meta">
+                    <span>
+                      {hasNote ? '✓ Note content saved' : '○ Template ready'}
+                    </span>
+                    <span>
+                      {driveMeta ? '✓ Google Doc linked' : '○ Not in Drive'}
+                    </span>
+                  </div>
+
+                  {hasNote && (
+                    <pre className="note-create-preview">
+                      {entry.supportNoteBreakdown}
+                    </pre>
+                  )}
+
+                  <div className="note-create-actions">
+                    <button
+                      type="button"
+                      className={hasNote ? 'secondary' : 'primary'}
+                      onClick={() => setSelected(entry)}
+                    >
+                      {hasNote ? 'Edit Note' : 'Create Note'}
+                    </button>
+                    {driveMeta?.webViewLink && (
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() =>
+                          window.open(
+                            driveMeta.webViewLink,
+                            '_blank',
+                            'noopener,noreferrer',
+                          )
+                        }
+                      >
+                        Open Google Doc
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {selected && (
+        <SupportNoteModal
+          entry={selected}
+          state={state}
+          credentials={credentials}
+          onState={onState}
+          onClose={() => setSelected(null)}
+        />
+      )}
+    </div>
+  );
+}
+
 function EntriesScreen({
   state,
   mode,
   credentials,
   onState,
+  go,
 }: {
   state: WorkspaceState;
   mode: Mode;
   credentials: WorkspaceCredentials;
   onState: (state: WorkspaceState) => void;
+  go: (section: Section) => void;
 }) {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | EntryTypeKey>('all');
@@ -4609,8 +4869,11 @@ function EntriesScreen({
         <div>
           <div className="eyebrow">RECORDS</div>
           <h2>Entries</h2>
-          <p>Search visits, contacts and case notes from one place.</p>
+          <p>Search visits, contacts and Work notes from one place.</p>
         </div>
+        <button className="primary" type="button" onClick={() => go('notes')}>
+          Create Note
+        </button>
       </section>
 
       {error && <div className="error-banner">{error}</div>}
@@ -5360,6 +5623,7 @@ export function App() {
     { key: 'home', label: 'Home', icon: '⌂' },
     { key: 'quick', label: 'Quick Entry', icon: '+' },
     { key: 'entries', label: 'Entries', icon: '▤' },
+    { key: 'notes', label: 'Notes', icon: '▧' },
     { key: 'calendar', label: 'Calendar', icon: '▦' },
     { key: 'payPeriod', label: 'Pay Period', icon: '◫' },
     { key: 'adminReview', label: 'Review', icon: '◎' },
@@ -5439,6 +5703,15 @@ export function App() {
               mode={mode}
               credentials={credentials}
               onState={setState}
+              go={setSection}
+            />
+          )}
+          {section === 'notes' && (
+            <NotesScreen
+              state={state}
+              credentials={credentials}
+              onState={setState}
+              go={setSection}
             />
           )}
           {section === 'calendar' && (
