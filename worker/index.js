@@ -3,7 +3,7 @@ const JSON_HEADERS = {
   'cache-control': 'no-store',
 };
 
-const MODES = new Set(['work', 'casework', 'paye']);
+const MODES = new Set(['work']);
 const ENTRY_TYPES = new Set([
   'homeVisit',
   'professionalContact',
@@ -1093,7 +1093,7 @@ export default {
 
         if (!initResponse.ok && initResponse.status !== 409) {
           return json(
-            { error: 'Could not initialise the Maleroom workspace.' },
+            { error: 'Could not initialise the NMRNL workspace.' },
             { status: 500 },
           );
         }
@@ -1147,7 +1147,7 @@ export default {
           return json(
             {
               error:
-                'The Maleroom account already has an NMRNL workspace. Sign in instead.',
+                'This NMRNL account already has a workspace. Sign in instead.',
               workspaceId,
             },
             { status: 409 },

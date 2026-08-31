@@ -11,7 +11,7 @@ The pre-NMRNL state of this repository is preserved on:
 ## Ported now
 
 - Private Cloudflare workspace creation
-- Work / Casework / PAYE modes
+- Work-only mode
 - Dashboard
 - Quick Entry
 - Original core entry types
@@ -28,7 +28,7 @@ The pre-NMRNL state of this repository is preserved on:
 
 ## Temporary build access
 
-The login wall is temporarily disabled while Work mode is being ported. The app opens the single Maleroom Durable Object workspace directly. The existing Cloudflare Access + Google Authenticator code remains in the repository behind `TEMPORARY_LOGIN_BYPASS` and can be re-enabled by setting the switch back to `false`.
+The login wall is temporarily disabled while Work mode is being ported. The app opens the single NMRNL Durable Object workspace directly. The existing Cloudflare Access + Google Authenticator code remains in the repository behind `TEMPORARY_LOGIN_BYPASS` and can be re-enabled by setting the switch back to `false`.
 
 **Do not treat the current deployment as private until the login wall is restored.**
 
@@ -105,4 +105,3 @@ After the Worker is renamed to `nmrnl` in the Cloudflare dashboard, update the W
 - Pay-period earnings / invoice workflow
 - Google Drive / Calendar
 - Admin review and charts
-- Selected casework modules

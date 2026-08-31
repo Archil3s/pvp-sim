@@ -1,4 +1,4 @@
-export type Mode = 'work' | 'casework' | 'paye';
+export type Mode = 'work';
 
 export type Section =
   | 'home'
@@ -6,8 +6,7 @@ export type Section =
   | 'entries'
   | 'calendar'
   | 'payPeriod'
-  | 'actions'
-  | 'workspace';
+  | 'actions';
 
 export type EntryTypeKey =
   | 'homeVisit'
@@ -203,9 +202,8 @@ export function entryType(key: EntryTypeKey): EntryTypeDefinition {
   return ENTRY_TYPES.find((item) => item.key === key) ?? ENTRY_TYPES[0];
 }
 
-export function entryTypesForMode(mode: Mode): EntryTypeDefinition[] {
-  if (mode !== 'paye') return ENTRY_TYPES;
-  return ENTRY_TYPES.filter((item) => !item.workOnly);
+export function entryTypesForMode(_mode: Mode): EntryTypeDefinition[] {
+  return ENTRY_TYPES;
 }
 
 export function localDateValue(date = new Date()): string {
@@ -240,8 +238,6 @@ export function formatDate(date: string): string {
   });
 }
 
-export function modeLabel(mode: Mode): string {
-  if (mode === 'casework') return 'Casework';
-  if (mode === 'paye') return 'PAYE';
+export function modeLabel(_mode: Mode): string {
   return 'Work';
 }

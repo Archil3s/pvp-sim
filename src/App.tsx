@@ -22,7 +22,6 @@ import {
   loadCredentials,
   loadKnownWorkspaceId,
   loginWithTotp,
-  NMRNL_ACCOUNT_EMAIL,
   openTemporaryWorkspace,
   rememberWorkspaceId,
   saveCredentials,
@@ -40,7 +39,6 @@ import {
   formatHours,
   localDateValue,
   localTimeValue,
-  modeLabel,
   type EmailRecoveryChallenge,
   type EntryDraft,
   type EntryTypeKey,
@@ -55,12 +53,6 @@ import {
 } from './model';
 
 const TEMPORARY_LOGIN_BYPASS = true;
-
-const MODE_OPTIONS: Array<{ key: Mode; label: string }> = [
-  { key: 'work', label: 'Work' },
-  { key: 'casework', label: 'Casework' },
-  { key: 'paye', label: 'PAYE' },
-];
 
 function todayStart(): number {
   const now = new Date();
@@ -203,7 +195,7 @@ function RecoveryAccess({
         <div className="code-login-brand">
           <div className="brand-mark">N</div>
           <div>
-            <div className="eyebrow">MALEROOM ACCOUNT RECOVERY</div>
+            <div className="eyebrow">NMRNL ACCOUNT RECOVERY</div>
             <h1>{challenge ? 'Set up a new Authenticator' : 'Recover NMRNL'}</h1>
           </div>
         </div>
@@ -213,7 +205,7 @@ function RecoveryAccess({
         {!challenge ? (
           <div className="recovery-stack">
             <p className="setup-lead">
-              Your NMRNL workspace is attached to the Maleroom account. Cloudflare
+              Your NMRNL workspace is attached to your private account. Cloudflare
               Access has already verified the email before this screen loads.
             </p>
 
@@ -221,7 +213,7 @@ function RecoveryAccess({
               <span className="locked-email-icon">✓</span>
               <span>
                 <small>Workspace owner</small>
-                <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
+                <strong>Private NMRNL account</strong>
               </span>
               <b>SYNCED</b>
             </div>
@@ -236,7 +228,7 @@ function RecoveryAccess({
             </button>
 
             <p className="privacy-note">
-              No Workspace ID is needed. The Maleroom account resolves the same
+              No Workspace ID is needed. Your NMRNL account resolves the same
               workspace on every device.
             </p>
           </div>
@@ -318,7 +310,7 @@ function WorkspaceSetup({
         setError(
           reason instanceof Error
             ? reason.message
-            : 'Could not load the Maleroom workspace.',
+            : 'Could not load the NMRNL workspace.',
         );
       })
       .finally(() => {
@@ -432,9 +424,9 @@ function WorkspaceSetup({
             <div className="brand-mark">N</div>
             <div>
               <div className="eyebrow">GOOGLE AUTHENTICATOR SETUP</div>
-              <h1>Secure your Maleroom workspace</h1>
+              <h1>Secure your NMRNL workspace</h1>
               <p className="setup-lead">
-                This workspace is permanently attached to {NMRNL_ACCOUNT_EMAIL}.
+                This workspace is attached to your private NMRNL account.
                 Scan the QR, then enter the generated 6-digit code.
               </p>
             </div>
@@ -444,7 +436,7 @@ function WorkspaceSetup({
             <span className="locked-email-icon">✓</span>
             <span>
               <small>Workspace owner</small>
-              <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
+              <strong>Private NMRNL account</strong>
             </span>
             <b>SYNCED</b>
           </div>
@@ -497,20 +489,20 @@ function WorkspaceSetup({
         <div className="code-login-brand">
           <div className="brand-mark">N</div>
           <div>
-            <div className="eyebrow">MALEROOM ACCOUNT</div>
+            <div className="eyebrow">NMRNL ACCOUNT</div>
             <h1>{workspaceExists ? 'Sign in to NMRNL' : 'Set up NMRNL'}</h1>
           </div>
         </div>
 
         <div className="account-access-line">
           <span>Workspace owner</span>
-          <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
+          <strong>Private NMRNL account</strong>
           <b>SYNCED</b>
         </div>
 
         <p className="setup-lead code-login-lead">
           {accountLoading
-            ? 'Finding your Maleroom workspace…'
+            ? 'Finding your NMRNL workspace…'
             : workspaceExists
               ? 'Your workspace is linked to this email. Enter the current 6-digit Google Authenticator code on any device.'
               : 'No workspace exists for this account yet. Create it once and it will be available on every device.'}
@@ -556,7 +548,7 @@ function WorkspaceSetup({
               <span>↻</span>
               <span>
                 <strong>Can’t access Google Authenticator?</strong>
-                <small>Recover the workspace through the Maleroom account</small>
+                <small>Recover the workspace through your NMRNL account</small>
               </span>
             </button>
           </>
@@ -567,7 +559,7 @@ function WorkspaceSetup({
             onClick={() => void create()}
             disabled={busy !== null}
           >
-            {busy === 'create' ? 'Creating…' : 'Create Maleroom workspace'}
+            {busy === 'create' ? 'Creating…' : 'Create NMRNL workspace'}
           </button>
         ) : null}
       </section>
@@ -611,7 +603,7 @@ function HomeScreen({
     <div className="page-stack">
       <section className="hero-card">
         <div>
-          <div className="eyebrow">{modeLabel(mode).toUpperCase()} WORKSPACE</div>
+          <div className="eyebrow">WORK</div>
           <h2>Everything important, without the paperwork sprawl.</h2>
           <p>
             Capture work quickly, keep support-note detail attached to the record,
@@ -2000,7 +1992,7 @@ function WorkspaceScreen({
           <span className="locked-email-icon">✉</span>
           <span>
             <small>Only approved NMRNL account</small>
-            <strong>{state.accountEmail || NMRNL_ACCOUNT_EMAIL}</strong>
+            <strong>Private NMRNL account</strong>
           </span>
           <b>{state.recoveryEmailEnabled ? 'RECOVERY ON' : 'LOCKED'}</b>
         </div>
@@ -2129,7 +2121,7 @@ export function App() {
     () => loadCredentials(),
   );
   const [state, setState] = useState<WorkspaceState | null>(null);
-  const [mode, setMode] = useState<Mode>('work');
+  const mode: Mode = 'work';
   const [section, setSection] = useState<Section>('home');
   const [loading, setLoading] = useState<boolean>(
     Boolean(credentials) || TEMPORARY_LOGIN_BYPASS,
@@ -2225,7 +2217,7 @@ export function App() {
       return (
         <main className="loading-shell">
           <div className="brand-mark">N</div>
-          <strong>Opening Maleroom workspace…</strong>
+          <strong>Opening NMRNL workspace…</strong>
           {error && <small>{error}</small>}
         </main>
       );
@@ -2277,14 +2269,9 @@ export function App() {
     { key: 'home', label: 'Home', icon: '⌂' },
     { key: 'quick', label: 'Quick Entry', icon: '+' },
     { key: 'entries', label: 'Entries', icon: '▤' },
-    ...(mode === 'work'
-      ? [
-          { key: 'calendar' as Section, label: 'Calendar', icon: '▦' },
-          { key: 'payPeriod' as Section, label: 'Pay Period', icon: '◫' },
-        ]
-      : []),
+    { key: 'calendar', label: 'Calendar', icon: '▦' },
+    { key: 'payPeriod', label: 'Pay Period', icon: '◫' },
     { key: 'actions', label: 'Actions', icon: '✓' },
-    { key: 'workspace', label: 'Workspace', icon: '⚙' },
   ];
 
   return (
@@ -2294,7 +2281,7 @@ export function App() {
           <span className="brand-mark small">N</span>
           <span>
             <strong>NMRNL</strong>
-            <small>Support workspace</small>
+            <small>Work</small>
           </span>
         </button>
 
@@ -2312,8 +2299,8 @@ export function App() {
         </nav>
 
         <div className="sidebar-footer">
-          <span>Private workspace</span>
-          <code>{credentials.workspaceId.slice(0, 8)}…</code>
+          <span>Work mode</span>
+          <strong>Cloud saved</strong>
         </div>
       </aside>
 
@@ -2324,24 +2311,10 @@ export function App() {
             <strong>NMRNL</strong>
           </div>
 
-          <div className="mode-switcher" aria-label="Workspace mode">
-            {MODE_OPTIONS.map((option) => (
-              <button
-                key={option.key}
-                className={mode === option.key ? 'active' : ''}
-                onClick={() => {
-                  setMode(option.key);
-                  if (
-                    option.key !== 'work' &&
-                    (section === 'calendar' || section === 'payPeriod')
-                  ) {
-                    setSection('home');
-                  }
-                }}
-              >
-                {option.label}
-              </button>
-            ))}
+          <div className="mode-switcher" aria-label="Work mode">
+            <button className="active" type="button" disabled>
+              Work
+            </button>
           </div>
 
           <div className="sync-pill">
@@ -2371,12 +2344,8 @@ export function App() {
               onState={setState}
             />
           )}
-          {section === 'calendar' && mode === 'work' && (
-            <CalendarScreen state={state} />
-          )}
-          {section === 'payPeriod' && mode === 'work' && (
-            <PayPeriodScreen state={state} />
-          )}
+          {section === 'calendar' && <CalendarScreen state={state} />}
+          {section === 'payPeriod' && <PayPeriodScreen state={state} />}
           {section === 'actions' && (
             <ActionsScreen
               state={state}
@@ -2385,28 +2354,10 @@ export function App() {
               onState={setState}
             />
           )}
-          {section === 'workspace' && (
-            <WorkspaceScreen
-              state={state}
-              credentials={credentials}
-              onState={setState}
-              onCredentials={setCredentials}
-              disconnect={() => {
-                if (!window.confirm('Sign out of NMRNL on this browser?')) return;
-                clearCredentials();
-                setCredentials(null);
-                setState(null);
-              }}
-            />
-          )}
         </div>
 
         <nav className="bottom-nav">
-          {navItems
-            .filter((item) =>
-              ['home', 'quick', 'entries', 'actions', 'workspace'].includes(item.key),
-            )
-            .map((item) => (
+          {navItems.map((item) => (
             <button
               key={item.key}
               className={section === item.key ? 'active' : ''}

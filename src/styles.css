@@ -1444,7 +1444,7 @@ button.danger-button {
     bottom: max(8px, env(safe-area-inset-bottom));
     height: 62px;
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     border: 1px solid #34405f;
     border-radius: 18px;
     background: rgba(18, 25, 39, 0.96);
