@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 const API_BASE = 'https://api.cloudflare.com/client/v4';
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
 const apiToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
+const googleClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
+const googleClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
 
 if (!accountId) {
   throw new Error('CLOUDFLARE_ACCOUNT_ID is required.');
@@ -22,6 +24,7 @@ const {
   allowedEmail,
   sessionDuration,
   identityProviderName,
+  identityProviderType,
   destinationType,
   autoRedirectToIdentity,
   allowAuthenticateViaWarp,
@@ -100,30 +103,46 @@ async function findWorker() {
   );
 }
 
-async function ensureOtpIdentityProvider() {
+async function ensureGoogleIdentityProvider() {
   const path =
     '/accounts/' +
     encodeURIComponent(accountId) +
     '/access/identity_providers';
 
   const providers = await cf(path);
-  const existing = (Array.isArray(providers) ? providers : []).find(
-    (provider) => provider.type === 'onetimepin',
-  );
-
-  if (existing) {
-    log('Using existing One-time PIN identity provider: ' + existing.name);
-    return existing;
+  if (!googleClientId || !googleClientSecret) {
+    throw new Error(
+      'GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are required for Google sign-in.',
+    );
   }
 
-  log('Creating One-time PIN identity provider.');
+  const existing = (Array.isArray(providers) ? providers : []).find(
+    (provider) =>
+      provider.type === (identityProviderType || 'google') &&
+      provider.name === (identityProviderName || 'NMRNL Google'),
+  );
+
+  const desired = {
+    name: identityProviderName || 'NMRNL Google',
+    type: identityProviderType || 'google',
+    config: {
+      client_id: googleClientId,
+      client_secret: googleClientSecret,
+    },
+  };
+
+  if (existing) {
+    log('Updating Google identity provider: ' + existing.name);
+    return cf(path + '/' + encodeURIComponent(existing.id), {
+      method: 'PUT',
+      body: JSON.stringify(desired),
+    });
+  }
+
+  log('Creating Google identity provider.');
   return cf(path, {
     method: 'POST',
-    body: JSON.stringify({
-      name: identityProviderName || 'NMRNL One-time PIN',
-      type: 'onetimepin',
-      config: {},
-    }),
+    body: JSON.stringify(desired),
   });
 }
 
@@ -145,7 +164,7 @@ function appHasWorkerDestination(app, workerId) {
     : false;
 }
 
-async function ensureApplication(workerId, otpIdpId) {
+async function ensureApplication(workerId, googleIdpId) {
   const appsRaw = await listApplications();
   const apps = Array.isArray(appsRaw) ? appsRaw : [];
 
@@ -182,7 +201,7 @@ async function ensureApplication(workerId, otpIdpId) {
         worker_id: workerId,
       },
     ],
-    allowed_idps: [otpIdpId],
+    allowed_idps: [googleIdpId],
     auto_redirect_to_identity: autoRedirectToIdentity !== false,
     allow_authenticate_via_warp: allowAuthenticateViaWarp === true,
     app_launcher_visible: appLauncherVisible === true,
@@ -315,7 +334,7 @@ async function normaliseApplicationPolicies(appId) {
   }
 }
 
-async function verifyConfiguration(workerId, otpIdpId, appId) {
+async function verifyConfiguration(workerId, googleIdpId, appId) {
   const app = await cf(
     '/accounts/' +
       encodeURIComponent(accountId) +
@@ -348,7 +367,7 @@ async function verifyConfiguration(workerId, otpIdpId, appId) {
     app?.type === 'self_hosted' &&
     appHasWorkerDestination(app, workerId) &&
     Array.isArray(app.allowed_idps) &&
-    app.allowed_idps.includes(otpIdpId) &&
+    app.allowed_idps.includes(googleIdpId) &&
     app.auto_redirect_to_identity === true &&
     expectedPolicy?.decision === 'allow' &&
     exactEmailRule &&
@@ -362,7 +381,7 @@ async function verifyConfiguration(workerId, otpIdpId, appId) {
 
   log('Verified: application = ' + applicationName);
   log('Verified: Worker destination = ' + workerName + ' (' + workerId + ')');
-  log('Verified: identity provider = One-time PIN only');
+  log('Verified: identity provider = Google only');
   log('Verified: allowed email = ' + allowedEmail);
   log('Verified: session duration = ' + (sessionDuration || '24h'));
 }
@@ -376,12 +395,12 @@ log(
     '.',
 );
 
-const otpIdp = await ensureOtpIdentityProvider();
-if (!otpIdp?.id) {
-  throw new Error('One-time PIN identity provider did not return an ID.');
+const googleIdp = await ensureGoogleIdentityProvider();
+if (!googleIdp?.id) {
+  throw new Error('Google identity provider did not return an ID.');
 }
 
-const app = await ensureApplication(worker.id, otpIdp.id);
+const app = await ensureApplication(worker.id, googleIdp.id);
 if (!app?.id) {
   throw new Error('Access application did not return an ID.');
 }
@@ -399,7 +418,7 @@ if (process.env.GITHUB_STEP_SUMMARY) {
       '- Application: **' + applicationName + '**',
       '- Worker: **' + workerName + '**',
       '- Destination: **production + previews**',
-      '- Identity provider: **One-time PIN**',
+      '- Identity provider: **Google**',
       '- Allowed account: **' + allowedEmail + '**',
       '- Session duration: **' + (sessionDuration || '24h') + '**',
       '',

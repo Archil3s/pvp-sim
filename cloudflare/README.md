@@ -9,10 +9,10 @@ The repository file `cloudflare/access.config.json` is the source of truth.
 The workflow:
 
 - finds the immutable Cloudflare Worker ID for `pvp-sim`
-- creates a One-time PIN identity provider if one does not already exist
+- creates a Google identity provider if one does not already exist
 - creates or updates the `NMRNL` self-hosted Access application
 - assigns the entire `pvp-sim` Worker as the destination, protecting production and preview URLs
-- restricts the application to One-time PIN authentication
+- restricts the application to Google authentication
 - enables instant redirect when OTP is the only identity provider
 - disables Cloudflare One Client/WARP authentication for this app
 - creates one Allow policy for exactly `blenhiemmaleroom@gmail.com`
@@ -33,8 +33,12 @@ Add:
 
 1. `CLOUDFLARE_ACCOUNT_ID`
 2. `CLOUDFLARE_API_TOKEN`
+3. `GOOGLE_OAUTH_CLIENT_ID`
+4. `GOOGLE_OAUTH_CLIENT_SECRET`
 
-The API token needs account permissions for:
+Create a Google OAuth client for a Web application and use Cloudflare Access's callback URL as an Authorized redirect URI. Cloudflare documents the callback format as `https://<your-team-name>.cloudflareaccess.com/cdn-cgi/access/callback`.
+
+The Cloudflare API token needs account permissions for:
 
 - Workers Scripts: Read
 - Access: Apps and Policies: Write
@@ -54,7 +58,7 @@ After the first successful run, the Cloudflare dashboard should show:
 
 - Application: `NMRNL`
 - Destination: `pvp-sim`
-- Authentication: One-time PIN only
+- Authentication: Google only
 - Policy: `NMRNL Owner`
 - Allowed email: `blenhiemmaleroom@gmail.com`
 
