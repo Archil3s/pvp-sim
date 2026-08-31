@@ -30,7 +30,7 @@ function safeSessionId(value) {
   return /^[a-z0-9]{12,40}$/i.test(value) ? value.toLowerCase() : '';
 }
 
-export class SupervisorHub {
+export class NmrnlStore {
   constructor(state, env) {
     this.state = state;
     this.env = env;
@@ -132,15 +132,17 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === '/api/health') {
-      return json({ ok: true, service: 'codex-supervisor-dashboard', now: new Date().toISOString() });
+      return json({ ok: true, service: 'nmrnl', now: new Date().toISOString() });
     }
 
+    // Temporary compatibility path while the Support Worker Log workflows are ported.
+    // The old supervisor API stays functional until its frontend is replaced.
     if (url.pathname === '/api/session' && request.method === 'POST') {
       const sessionId = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
       const writeToken = randomToken();
       const viewToken = randomToken();
-      const id = env.SUPERVISOR_HUB.idFromName(sessionId);
-      const stub = env.SUPERVISOR_HUB.get(id);
+      const id = env.NMRNL_STORE.idFromName(sessionId);
+      const stub = env.NMRNL_STORE.get(id);
       const initRequest = new Request(`${url.origin}/api/session/${sessionId}/init`, {
         method: 'POST',
         headers: {
@@ -162,8 +164,8 @@ export default {
     const match = url.pathname.match(/^\/api\/session\/([a-z0-9]{12,40})(?:\/(telemetry|ws))?$/i);
     if (match) {
       const sessionId = safeSessionId(match[1]);
-      const id = env.SUPERVISOR_HUB.idFromName(sessionId);
-      return env.SUPERVISOR_HUB.get(id).fetch(request);
+      const id = env.NMRNL_STORE.idFromName(sessionId);
+      return env.NMRNL_STORE.get(id).fetch(request);
     }
 
     if (url.pathname.startsWith('/api/')) return json({ error: 'not found' }, { status: 404 });
