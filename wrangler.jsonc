@@ -1,18 +1,18 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "pvp-sim",
+  "name": "nmrnl",
   "main": "./worker/index.js",
-  "compatibility_date": "2026-08-23",
+  "compatibility_date": "2026-08-31",
   "durable_objects": {
     "bindings": [
       {
-        "name": "SUPERVISOR_HUB",
-        "class_name": "SupervisorHub"
+        "name": "NMRNL_STORE",
+        "class_name": "NmrnlStore"
       }
     ]
   },
   "exports": {
-    "SupervisorHub": {
+    "NmrnlStore": {
       "type": "durable-object",
       "storage": "sqlite"
     }
