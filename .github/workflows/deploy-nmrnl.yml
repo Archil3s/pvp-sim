@@ -37,14 +37,33 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+          ACCOUNT_ID="$(printf '%s' "$CLOUDFLARE_ACCOUNT_ID" | tr -d '\r\n' | xargs)"
+          API_TOKEN="$(printf '%s' "$CLOUDFLARE_API_TOKEN" | tr -d '\r\n' | sed -E 's/^[Bb]earer[[:space:]]+//' | xargs)"
+
+          if [ -z "$ACCOUNT_ID" ]; then
             echo "::error::Missing repository secret CLOUDFLARE_ACCOUNT_ID"
             exit 1
           fi
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+          if [ -z "$API_TOKEN" ]; then
             echo "::error::Missing repository secret CLOUDFLARE_API_TOKEN"
             exit 1
           fi
+
+          echo "CLOUDFLARE_ACCOUNT_ID=$ACCOUNT_ID" >> "$GITHUB_ENV"
+          echo "CLOUDFLARE_API_TOKEN=$API_TOKEN" >> "$GITHUB_ENV"
+
+          echo "Cloudflare account ID length: ${#ACCOUNT_ID}"
+          echo "Cloudflare API token length: ${#API_TOKEN}"
+
+          STATUS="$(curl -sS -o /tmp/cf-token.json -w '%{http_code}'             -H "Authorization: Bearer $API_TOKEN"             -H "Content-Type: application/json"             https://api.cloudflare.com/client/v4/user/tokens/verify || true)"
+
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Cloudflare rejected CLOUDFLARE_API_TOKEN during direct verification (HTTP $STATUS)."
+            cat /tmp/cf-token.json | sed -E 's/"id":"[^"]+"/"id":"***"/g'
+            exit 1
+          fi
+
+          echo "Cloudflare API token verified successfully."
 
       - name: Install dependencies
         run: npm install
@@ -54,7 +73,4 @@ jobs:
 
       - name: Deploy Worker with Wrangler 4
         shell: bash
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx --yes wrangler@4.127.1 deploy --config wrangler.jsonc
