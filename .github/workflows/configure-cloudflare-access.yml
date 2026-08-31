@@ -9,6 +9,8 @@ on:
       - ".github/workflows/configure-cloudflare-access.yml"
       - "cloudflare/access.config.json"
       - "scripts/configure-cloudflare-access.mjs"
+  issues:
+    types: [opened]
 
 permissions:
   contents: read
@@ -19,6 +21,7 @@ concurrency:
 
 jobs:
   configure-access:
+    if: github.event_name != 'issues' || github.event.issue.title == 'Run NMRNL Cloudflare'
     name: Configure NMRNL Access
     runs-on: ubuntu-latest
     timeout-minutes: 10
