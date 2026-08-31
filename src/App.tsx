@@ -29,6 +29,7 @@ import {
   setGeneralActionCompleted,
   setVisitActionCompleted,
   updateEntry,
+  updateSupportNote,
 } from './api';
 import {
   ENTRY_TYPES,
@@ -45,6 +46,7 @@ import {
   type GeneralAction,
   type Mode,
   type Section,
+  type SupportNoteStatus,
   type TextContactDirection,
   type WorkEntry,
   type WorkspaceCredentials,
@@ -57,6 +59,85 @@ const TEMPORARY_LOGIN_BYPASS = true;
 function todayStart(): number {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+}
+
+const SUPPORT_NOTE_TEMPLATE = [
+  'Attendance',
+  '',
+  'What happened',
+  '',
+  'Work/task completed',
+  '',
+  'Support given',
+  '',
+  'Issue/problem',
+  '',
+  'Outcome',
+  '',
+  'Next step',
+  '',
+  'Anything to follow up',
+  '',
+  'Referrals',
+].join('\n');
+
+const SUPPORT_NOTE_HEADINGS = new Set([
+  'attendance',
+  'what happened',
+  'work/task completed',
+  'support given',
+  'issue/problem',
+  'outcome',
+  'next step',
+  'anything to follow up',
+  'referrals',
+]);
+
+const SUPPORT_NOTE_STATUS_OPTIONS: Array<{
+  key: SupportNoteStatus;
+  label: string;
+}> = [
+  { key: 'incomplete', label: 'Incomplete' },
+  { key: 'inProgress', label: 'In Progress' },
+  { key: 'finished', label: 'Finished' },
+  { key: 'submitted', label: 'Submitted' },
+];
+
+function supportNoteStatus(entry: WorkEntry): SupportNoteStatus {
+  if (
+    entry.supportNoteStatus === 'incomplete' ||
+    entry.supportNoteStatus === 'inProgress' ||
+    entry.supportNoteStatus === 'finished' ||
+    entry.supportNoteStatus === 'submitted'
+  ) {
+    return entry.supportNoteStatus;
+  }
+  return hasSupportNoteContent(entry.supportNoteBreakdown)
+    ? 'inProgress'
+    : 'incomplete';
+}
+
+function supportNoteStatusLabel(status: SupportNoteStatus): string {
+  return (
+    SUPPORT_NOTE_STATUS_OPTIONS.find((item) => item.key === status)?.label ||
+    'Incomplete'
+  );
+}
+
+function hasSupportNoteContent(noteText: string): boolean {
+  const source = noteText.trim();
+  if (!source) return false;
+
+  return source.split(/\r?\n/).some((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
+    const normalized = trimmed
+      .replace(/\*/g, '')
+      .replace(/:$/g, '')
+      .trim()
+      .toLowerCase();
+    return !SUPPORT_NOTE_HEADINGS.has(normalized);
+  });
 }
 
 function StatCard({
@@ -1276,6 +1357,163 @@ function entriesOverlap(entries: WorkEntry[]): Set<string> {
   return result;
 }
 
+function SupportNoteModal({
+  entry,
+  credentials,
+  onState,
+  onClose,
+}: {
+  entry: WorkEntry;
+  credentials: WorkspaceCredentials;
+  onState: (state: WorkspaceState) => void;
+  onClose: () => void;
+}) {
+  const [personName, setPersonName] = useState(
+    entry.supportNotePersonName?.trim() || entry.client,
+  );
+  const [noteText, setNoteText] = useState(
+    entry.supportNoteBreakdown.trim() || SUPPORT_NOTE_TEMPLATE,
+  );
+  const [status, setStatus] = useState<SupportNoteStatus>(
+    supportNoteStatus(entry),
+  );
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const saveNote = async (
+    nextStatus = status,
+    closeAfter = false,
+  ) => {
+    setSaving(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const nextState = await updateSupportNote(credentials, entry.id, {
+        personName: personName.trim() || entry.client,
+        status: nextStatus,
+        noteText: noteText.trim(),
+      });
+      onState(nextState);
+      setStatus(nextStatus);
+      setMessage('Support note saved in NMRNL.');
+      if (closeAfter) onClose();
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Could not save the support note.',
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const changeStatus = async (nextStatus: SupportNoteStatus) => {
+    setStatus(nextStatus);
+    await saveNote(nextStatus, false);
+  };
+
+  return (
+    <div className="modal-backdrop support-note-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="support-note-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+        aria-label="Support note editor"
+      >
+        <div className="support-note-header">
+          <div>
+            <div className="eyebrow">SUPPORT NOTE</div>
+            <h2>{entry.client}</h2>
+            <p>{formatDate(entry.date)} · {entry.startTime} · {entryType(entry.type).label}</p>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose}>×</button>
+        </div>
+
+        {error && <div className="error-banner">{error}</div>}
+        {message && <div className="success-banner">{message}</div>}
+
+        <label className="field">
+          <span>Person name</span>
+          <input
+            value={personName}
+            onChange={(event) => setPersonName(event.target.value)}
+            disabled={saving}
+          />
+        </label>
+
+        <div className="support-note-tools">
+          <strong>Status</strong>
+          <div className="support-note-statuses">
+            {SUPPORT_NOTE_STATUS_OPTIONS.map((item) => (
+              <button
+                type="button"
+                key={item.key}
+                className={
+                  'support-note-status status-' +
+                  item.key +
+                  (status === item.key ? ' active' : '')
+                }
+                onClick={() => void changeStatus(item.key)}
+                disabled={saving}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <label className="field support-note-editor">
+          <span>Support worker note</span>
+          <textarea
+            value={noteText}
+            onChange={(event) => setNoteText(event.target.value)}
+            disabled={saving}
+            spellCheck
+            rows={18}
+          />
+        </label>
+
+        <div className="support-note-summary">
+          <span>
+            <strong>{supportNoteStatusLabel(status)}</strong>
+            <small>
+              {hasSupportNoteContent(noteText)
+                ? 'Note content entered'
+                : 'Structured template ready for completion'}
+            </small>
+          </span>
+          {entry.supportNoteUpdatedAt && (
+            <small>
+              Last saved {new Date(entry.supportNoteUpdatedAt).toLocaleString()}
+            </small>
+          )}
+        </div>
+
+        <div className="support-note-actions">
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => void saveNote(status, true)}
+            disabled={saving}
+          >
+            {saving ? 'Saving…' : 'Save Draft & Return'}
+          </button>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => void saveNote(status, false)}
+            disabled={saving}
+          >
+            {saving ? 'Saving…' : 'Save Note in App'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function CalendarScreen({ state }: { state: WorkspaceState }) {
   const workEntries = state.entries
     .filter((entry) => entry.mode === 'work')
@@ -1296,7 +1534,7 @@ function CalendarScreen({ state }: { state: WorkspaceState }) {
 
   const selectedMinutes = selected.reduce((sum, entry) => sum + entry.minutes, 0);
   const selectedKm = selected.reduce((sum, entry) => sum + entryKilometres(entry), 0);
-  const missingNotes = selected.filter((entry) => !entry.supportNoteBreakdown.trim()).length;
+  const missingNotes = selected.filter((entry) => !hasSupportNoteContent(entry.supportNoteBreakdown)).length;
   const openActions = selected.reduce(
     (sum, entry) => sum + entry.nextActions.filter((action) => !action.completedAt).length,
     0,
@@ -1321,7 +1559,7 @@ function CalendarScreen({ state }: { state: WorkspaceState }) {
           {days.map((day) => {
             const entries = workEntries.filter((entry) => entry.date === day);
             const overlaps = entriesOverlap(entries);
-            const missing = entries.some((entry) => !entry.supportNoteBreakdown.trim());
+            const missing = entries.some((entry) => !hasSupportNoteContent(entry.supportNoteBreakdown));
             const actions = entries.some((entry) => entry.nextActions.some((action) => !action.completedAt));
             return (
               <button
@@ -1366,7 +1604,7 @@ function CalendarScreen({ state }: { state: WorkspaceState }) {
                     <span>{entryType(entry.type).label} · {entry.minutes} min · {entryKilometres(entry).toFixed(1)} km</span>
                   </div>
                   <div className="calendar-entry-flags">
-                    {!entry.supportNoteBreakdown.trim() && <b className="flag danger">Missing note</b>}
+                    {!hasSupportNoteContent(entry.supportNoteBreakdown) && <b className="flag danger">Missing note</b>}
                     {entry.nextActions.some((action) => !action.completedAt) && <b className="flag warn">Follow-up</b>}
                     {overlapIds.has(entry.id) && <b className="flag overlap">Overlap</b>}
                     {entry.googleCalendarEntered && <b className="flag ok">Calendar entered</b>}
@@ -1409,7 +1647,7 @@ function PayPeriodScreen({ state }: { state: WorkspaceState }) {
   const totalMinutes = entries.reduce((sum, entry) => sum + entry.minutes, 0);
   const totalKm = entries.reduce((sum, entry) => sum + entryKilometres(entry), 0);
   const clients = new Set(entries.map((entry) => entry.client)).size;
-  const missingNotes = entries.filter((entry) => !entry.supportNoteBreakdown.trim()).length;
+  const missingNotes = entries.filter((entry) => !hasSupportNoteContent(entry.supportNoteBreakdown)).length;
   const openActions = entries.reduce(
     (sum, entry) => sum + entry.nextActions.filter((action) => !action.completedAt).length,
     0,
@@ -1492,6 +1730,7 @@ function EntriesScreen({
   const [typeFilter, setTypeFilter] = useState<'all' | EntryTypeKey>('all');
   const [busyId, setBusyId] = useState('');
   const [editing, setEditing] = useState<WorkEntry | null>(null);
+  const [supportNoteEntry, setSupportNoteEntry] = useState<WorkEntry | null>(null);
   const [error, setError] = useState('');
 
   const entries = useMemo(() => {
@@ -1614,6 +1853,14 @@ function EntriesScreen({
                   </div>
                   <div className="entry-card-actions">
                     <button
+                      className={'support-note-chip status-' + supportNoteStatus(entry)}
+                      onClick={() => setSupportNoteEntry(entry)}
+                      title="Open support note"
+                      type="button"
+                    >
+                      ◫ {supportNoteStatusLabel(supportNoteStatus(entry))}
+                    </button>
+                    <button
                       className="icon-button"
                       onClick={() => setEditing(entry)}
                       title="Edit entry"
@@ -1643,7 +1890,9 @@ function EntriesScreen({
                     )}
                     {entry.supportNoteBreakdown && (
                       <div className="entry-note-block">
-                        <span>Support note</span>
+                        <span>
+                          Support note · {supportNoteStatusLabel(supportNoteStatus(entry))}
+                        </span>
                         <pre>{entry.supportNoteBreakdown}</pre>
                       </div>
                     )}
@@ -1670,6 +1919,15 @@ function EntriesScreen({
           credentials={credentials}
           onState={onState}
           onClose={() => setEditing(null)}
+        />
+      )}
+
+      {supportNoteEntry && (
+        <SupportNoteModal
+          entry={supportNoteEntry}
+          credentials={credentials}
+          onState={onState}
+          onClose={() => setSupportNoteEntry(null)}
         />
       )}
     </div>

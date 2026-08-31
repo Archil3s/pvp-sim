@@ -2,6 +2,7 @@ import type {
   EntryDraft,
   GeneralAction,
   Mode,
+  SupportNoteStatus,
   EmailRecoveryChallenge,
   WorkspaceCredentials,
   WorkspaceSetupChallenge,
@@ -318,6 +319,25 @@ export function updateEntry(
     {
       method: 'PATCH',
       body: JSON.stringify(draft),
+    },
+  ).then((payload) => payload.state);
+}
+
+export function updateSupportNote(
+  credentials: WorkspaceCredentials,
+  entryId: string,
+  input: {
+    personName: string;
+    status: SupportNoteStatus;
+    noteText: string;
+  },
+): Promise<WorkspaceState> {
+  return workspaceRequest<{ state: WorkspaceState }>(
+    credentials,
+    '/entries/' + encodeURIComponent(entryId) + '/support-note',
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
     },
   ).then((payload) => payload.state);
 }

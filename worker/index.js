@@ -15,6 +15,12 @@ const ENTRY_TYPES = new Set([
   'textNote',
 ]);
 const TEXT_DIRECTIONS = new Set(['received', 'sent', 'exchange']);
+const SUPPORT_NOTE_STATUSES = new Set([
+  'incomplete',
+  'inProgress',
+  'finished',
+  'submitted',
+]);
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const RATE_WINDOW_MS = 5 * 60 * 1000;
@@ -729,6 +735,11 @@ export class SupervisorHub {
       minutes,
       notes,
       supportNoteBreakdown: stringValue(body.supportNoteBreakdown),
+      supportNoteStatus: stringValue(body.supportNoteBreakdown)
+        ? 'inProgress'
+        : 'incomplete',
+      supportNotePersonName: client,
+      supportNoteUpdatedAt: stringValue(body.supportNoteBreakdown) ? now : null,
       nextActions,
       googleCalendarEntered: false,
       importantText: body.importantText === true,
@@ -821,6 +832,34 @@ export class SupervisorHub {
     entry.odometerEnd =
       type === 'homeVisit' ? numberValue(body.odometerEnd) : null;
     entry.updatedAt = new Date().toISOString();
+
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data), entry });
+  }
+
+  async updateSupportNote(request, entryId) {
+    const body = await readObject(request);
+    const data = await this.getData();
+    const entry = data.entries.find((item) => item.id === entryId);
+
+    if (!entry) {
+      return json({ error: 'Entry not found.' }, { status: 404 });
+    }
+
+    const status = stringValue(body.status);
+    if (!SUPPORT_NOTE_STATUSES.has(status)) {
+      return json({ error: 'Unknown support note status.' }, { status: 400 });
+    }
+
+    const noteText = stringValue(body.noteText);
+    const personName = stringValue(body.personName) || entry.client;
+    const now = new Date().toISOString();
+
+    entry.supportNoteBreakdown = noteText;
+    entry.supportNoteStatus = status;
+    entry.supportNotePersonName = personName;
+    entry.supportNoteUpdatedAt = now;
+    entry.updatedAt = now;
 
     await this.putData(data);
     return json({ state: await this.snapshot(null, data), entry });
@@ -979,6 +1018,16 @@ export class SupervisorHub {
 
       if (suffix === '/entries' && request.method === 'POST') {
         return this.createEntry(request);
+      }
+
+      const supportNoteUpdate = suffix.match(
+        /^\/entries\/([^/]+)\/support-note$/,
+      );
+      if (supportNoteUpdate && request.method === 'PATCH') {
+        return this.updateSupportNote(
+          request,
+          decodeURIComponent(supportNoteUpdate[1]),
+        );
       }
 
       const entryUpdate = suffix.match(/^\/entries\/([^/]+)$/);

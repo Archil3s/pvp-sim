@@ -20,6 +20,12 @@ export type EntryTypeKey =
 
 export type TextContactDirection = 'received' | 'sent' | 'exchange';
 
+export type SupportNoteStatus =
+  | 'incomplete'
+  | 'inProgress'
+  | 'finished'
+  | 'submitted';
+
 export interface EntryTypeDefinition {
   key: EntryTypeKey;
   label: string;
@@ -130,6 +136,9 @@ export interface WorkEntry {
   minutes: number;
   notes: string[];
   supportNoteBreakdown: string;
+  supportNoteStatus?: SupportNoteStatus;
+  supportNotePersonName?: string;
+  supportNoteUpdatedAt?: string | null;
   nextActions: NextAction[];
   googleCalendarEntered: boolean;
   importantText: boolean;
