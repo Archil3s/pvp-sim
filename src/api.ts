@@ -124,10 +124,50 @@ async function workspaceRequest<T>(
   });
 }
 
-export async function createWorkspace(): Promise<WorkspaceSetupChallenge> {
+export async function requestAccountAccessEmail(): Promise<{
+  sentTo: string;
+  expiresInSeconds: number;
+}> {
+  const response = await fetch('/api/account/access/request', {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: NMRNL_ACCOUNT_EMAIL }),
+  });
+
+  return parseResponse<{
+    sentTo: string;
+    expiresInSeconds: number;
+  }>(response);
+}
+
+export async function verifyAccountAccessEmail(
+  code: string,
+): Promise<{ creationToken: string }> {
+  const response = await fetch('/api/account/access/verify', {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      email: NMRNL_ACCOUNT_EMAIL,
+      code,
+    }),
+  });
+
+  return parseResponse<{ creationToken: string }>(response);
+}
+
+export async function createWorkspace(
+  creationToken: string,
+): Promise<WorkspaceSetupChallenge> {
   const response = await fetch('/api/workspace', {
     method: 'POST',
     cache: 'no-store',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      email: NMRNL_ACCOUNT_EMAIL,
+      creationToken,
+    }),
   });
 
   return parseResponse<WorkspaceSetupChallenge>(response);

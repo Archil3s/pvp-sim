@@ -23,11 +23,13 @@ import {
   NMRNL_ACCOUNT_EMAIL,
   rememberWorkspaceId,
   requestRecoveryEmail,
+  requestAccountAccessEmail,
   saveCredentials,
   confirmRecoveryAuthenticator,
   setGeneralActionCompleted,
   setVisitActionCompleted,
   verifyRecoveryEmailCode,
+  verifyAccountAccessEmail,
 } from './api';
 import {
   ENTRY_TYPES,
@@ -382,7 +384,9 @@ function WorkspaceSetup({
   const [challenge, setChallenge] = useState<WorkspaceSetupChallenge | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [recovery, setRecovery] = useState(false);
-  const [busy, setBusy] = useState<'create' | 'verify' | 'login' | null>(null);
+  const [createEmailStep, setCreateEmailStep] = useState(false);
+  const [createEmailCode, setCreateEmailCode] = useState('');
+  const [busy, setBusy] = useState<'create' | 'create-email' | 'verify' | 'login' | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -413,18 +417,43 @@ function WorkspaceSetup({
     setCode(value.replace(/\D/g, '').slice(0, 6));
   };
 
-  const create = async () => {
+  const beginCreate = async () => {
+    setBusy('create-email');
+    setError('');
+    try {
+      await requestAccountAccessEmail();
+      setCreateEmailStep(true);
+      setCreateEmailCode('');
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Could not send the account verification email.',
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const create = async (event: FormEvent) => {
+    event.preventDefault();
+    if (createEmailCode.length !== 6) return;
+
     setBusy('create');
     setError('');
     try {
-      const nextChallenge = await createWorkspace();
+      const verified = await verifyAccountAccessEmail(createEmailCode);
+      const nextChallenge = await createWorkspace(verified.creationToken);
       rememberWorkspaceId(nextChallenge.workspaceId);
       setWorkspaceId(nextChallenge.workspaceId);
       setShowWorkspaceField(false);
+      setCreateEmailStep(false);
+      setCreateEmailCode('');
       setChallenge(nextChallenge);
       setCode('');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not create workspace.');
+      setCreateEmailCode('');
     } finally {
       setBusy(null);
     }
@@ -477,6 +506,86 @@ function WorkspaceSetup({
         }}
         onRecovered={onConnected}
       />
+    );
+  }
+
+  if (createEmailStep) {
+    return (
+      <main className="setup-shell">
+        <section className="setup-card code-login-card">
+          <button
+            type="button"
+            className="recovery-back"
+            onClick={() => {
+              setCreateEmailStep(false);
+              setCreateEmailCode('');
+              setError('');
+            }}
+          >
+            ← Back
+          </button>
+
+          <div className="code-login-brand">
+            <div className="brand-mark">N</div>
+            <div>
+              <div className="eyebrow">VERIFY NMRNL ACCOUNT</div>
+              <h1>Check your email</h1>
+            </div>
+          </div>
+
+          <p className="setup-lead">
+            Workspace creation is restricted to the one approved account. Enter the
+            6-digit code sent to <b>{NMRNL_ACCOUNT_EMAIL}</b>.
+          </p>
+
+          <div className="locked-email-card setup-account">
+            <span className="locked-email-icon">✉</span>
+            <span>
+              <small>Only approved account</small>
+              <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
+            </span>
+            <b>ONLY</b>
+          </div>
+
+          {error && <div className="error-banner">{error}</div>}
+
+          <form className="code-login-form" onSubmit={create}>
+            <label className="code-prompt">
+              <span>Email access code</span>
+              <input
+                className="totp-input login-code"
+                value={createEmailCode}
+                onChange={(event) =>
+                  setCreateEmailCode(
+                    event.target.value.replace(/\D/g, '').slice(0, 6),
+                  )
+                }
+                placeholder="000000"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                autoFocus
+              />
+            </label>
+
+            <button
+              className="primary big"
+              disabled={busy !== null || createEmailCode.length !== 6}
+            >
+              {busy === 'create' ? 'Creating workspace…' : 'Verify email & continue'}
+            </button>
+          </form>
+
+          <button
+            type="button"
+            className="switch-workspace-button"
+            onClick={() => void beginCreate()}
+            disabled={busy !== null}
+          >
+            Send another code
+          </button>
+        </section>
+      </main>
     );
   }
 
@@ -665,10 +774,10 @@ function WorkspaceSetup({
         <button
           className="secondary big create-secondary"
           type="button"
-          onClick={create}
+          onClick={() => void beginCreate()}
           disabled={busy !== null}
         >
-          {busy === 'create' ? 'Creating…' : 'Create private workspace'}
+          {busy === 'create-email' ? 'Sending email…' : 'Create private workspace'}
         </button>
       </section>
     </main>
