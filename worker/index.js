@@ -15,6 +15,11 @@ const ENTRY_TYPES = new Set([
   'textNote',
 ]);
 const TEXT_DIRECTIONS = new Set(['received', 'sent', 'exchange']);
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const RATE_WINDOW_MS = 5 * 60 * 1000;
+const RATE_LOCK_MS = 10 * 60 * 1000;
+const MAX_AUTH_FAILURES = 5;
 
 function json(value, init = {}) {
   const headers = new Headers(init.headers || {});
@@ -22,18 +27,89 @@ function json(value, init = {}) {
   return new Response(JSON.stringify(value), { ...init, headers });
 }
 
-function randomToken() {
-  const bytes = new Uint8Array(32);
+function randomBytes(length) {
+  const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
+  return bytes;
+}
+
+function bytesToHex(bytes) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function randomToken() {
+  return bytesToHex(randomBytes(32));
+}
+
+function generateTotpSecret() {
+  return base32Encode(randomBytes(20));
+}
+
+function base32Encode(bytes) {
+  let bits = 0;
+  let value = 0;
+  let output = '';
+
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+
+    while (bits >= 5) {
+      output += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+
+  if (bits > 0) {
+    output += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  }
+
+  return output;
+}
+
+function base32Decode(input) {
+  const clean = String(input || '')
+    .toUpperCase()
+    .replace(/=+$/g, '')
+    .replace(/\s+/g, '');
+
+  let bits = 0;
+  let value = 0;
+  const output = [];
+
+  for (const char of clean) {
+    const index = BASE32_ALPHABET.indexOf(char);
+    if (index < 0) throw new Error('Invalid Authenticator secret.');
+
+    value = (value << 5) | index;
+    bits += 5;
+
+    if (bits >= 8) {
+      output.push((value >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+
+  return new Uint8Array(output);
+}
+
+function otpauthUri(workspaceId, secret) {
+  const label = encodeURIComponent('NMRNL:' + workspaceId);
+  return (
+    'otpauth://totp/' +
+    label +
+    '?secret=' +
+    encodeURIComponent(secret) +
+    '&issuer=' +
+    encodeURIComponent('NMRNL') +
+    '&algorithm=SHA1&digits=6&period=30'
+  );
 }
 
 async function hashToken(token) {
   const bytes = new TextEncoder().encode(token);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest), (byte) =>
-    byte.toString(16).padStart(2, '0'),
-  ).join('');
+  return bytesToHex(new Uint8Array(digest));
 }
 
 function bearer(request) {
@@ -99,6 +175,72 @@ async function readObject(request) {
   return value;
 }
 
+function codesEqual(left, right) {
+  if (left.length !== right.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < left.length; i += 1) {
+    mismatch |= left.charCodeAt(i) ^ right.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+
+async function hotp(secret, counter) {
+  const keyBytes = base32Decode(secret);
+  const counterBytes = new Uint8Array(8);
+  let value = BigInt(counter);
+
+  for (let index = 7; index >= 0; index -= 1) {
+    counterBytes[index] = Number(value & 255n);
+    value >>= 8n;
+  }
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    keyBytes,
+    { name: 'HMAC', hash: 'SHA-1' },
+    false,
+    ['sign'],
+  );
+
+  const signed = new Uint8Array(
+    await crypto.subtle.sign('HMAC', key, counterBytes),
+  );
+  const offset = signed[signed.length - 1] & 15;
+  const binary =
+    ((signed[offset] & 127) << 24) |
+    ((signed[offset + 1] & 255) << 16) |
+    ((signed[offset + 2] & 255) << 8) |
+    (signed[offset + 3] & 255);
+
+  return String(binary % 1_000_000).padStart(6, '0');
+}
+
+async function verifyTotp(secret, suppliedCode) {
+  const code = String(suppliedCode || '').replace(/\s+/g, '');
+  if (!/^\d{6}$/.test(code)) return false;
+
+  const counter = Math.floor(Date.now() / 30_000);
+  for (const windowOffset of [-1, 0, 1]) {
+    const expected = await hotp(secret, counter + windowOffset);
+    if (codesEqual(expected, code)) return true;
+  }
+
+  return false;
+}
+
+function sessionList(meta) {
+  const now = Date.now();
+  return (Array.isArray(meta.sessions) ? meta.sessions : [])
+    .filter(
+      (session) =>
+        session &&
+        typeof session.hash === 'string' &&
+        typeof session.expiresAt === 'string' &&
+        Date.parse(session.expiresAt) > now,
+    )
+    .slice(-9);
+}
+
 export class SupervisorHub {
   constructor(state, env) {
     this.state = state;
@@ -107,6 +249,10 @@ export class SupervisorHub {
 
   async getMeta() {
     return (await this.state.storage.get('meta')) || null;
+  }
+
+  async putMeta(meta) {
+    await this.state.storage.put('meta', meta);
   }
 
   async getData() {
@@ -120,9 +266,19 @@ export class SupervisorHub {
   async authenticated(request) {
     const meta = await this.getMeta();
     if (!meta) return false;
+
     const token = bearer(request);
     if (!token) return false;
-    return (await hashToken(token)) === meta.ownerTokenHash;
+
+    const tokenHash = await hashToken(token);
+
+    // Compatibility path for pre-Authenticator workspaces. This field is
+    // deleted permanently after a successful in-place TOTP upgrade.
+    if (meta.ownerTokenHash && tokenHash === meta.ownerTokenHash) {
+      return true;
+    }
+
+    return sessionList(meta).some((session) => session.hash === tokenHash);
   }
 
   async snapshot(meta = null, data = null) {
@@ -132,6 +288,7 @@ export class SupervisorHub {
     return {
       workspaceId: resolvedMeta?.workspaceId || '',
       createdAt: resolvedMeta?.createdAt || new Date().toISOString(),
+      authenticatorEnabled: Boolean(resolvedMeta?.totpEnabled),
       clients: resolvedData.clients,
       entries: resolvedData.entries,
       actions: resolvedData.actions,
@@ -140,9 +297,109 @@ export class SupervisorHub {
 
   async requireAuth(request) {
     if (!(await this.authenticated(request))) {
-      return json({ error: 'Workspace key rejected.' }, { status: 401 });
+      return json(
+        { error: 'Session expired. Sign in with a new Authenticator code.' },
+        { status: 401 },
+      );
     }
     return null;
+  }
+
+  async rateLimitStatus() {
+    const current = (await this.state.storage.get('authRate')) || null;
+    const now = Date.now();
+
+    if (current?.lockedUntil && current.lockedUntil > now) {
+      return {
+        blocked: true,
+        retryAfterSeconds: Math.max(
+          1,
+          Math.ceil((current.lockedUntil - now) / 1000),
+        ),
+      };
+    }
+
+    return { blocked: false, retryAfterSeconds: 0 };
+  }
+
+  async authFailure() {
+    const now = Date.now();
+    const current = (await this.state.storage.get('authRate')) || {
+      windowStartedAt: now,
+      failures: 0,
+      lockedUntil: 0,
+    };
+
+    if (now - current.windowStartedAt > RATE_WINDOW_MS) {
+      current.windowStartedAt = now;
+      current.failures = 0;
+      current.lockedUntil = 0;
+    }
+
+    current.failures += 1;
+
+    if (current.failures >= MAX_AUTH_FAILURES) {
+      current.lockedUntil = now + RATE_LOCK_MS;
+      current.windowStartedAt = now;
+      current.failures = 0;
+    }
+
+    await this.state.storage.put('authRate', current);
+  }
+
+  async authSuccess() {
+    await this.state.storage.delete('authRate');
+  }
+
+  async verifyAuthenticator(meta, code) {
+    const limit = await this.rateLimitStatus();
+    if (limit.blocked) {
+      return {
+        response: json(
+          {
+            error:
+              'Too many incorrect codes. Try again in ' +
+              Math.ceil(limit.retryAfterSeconds / 60) +
+              ' minute(s).',
+          },
+          {
+            status: 429,
+            headers: { 'retry-after': String(limit.retryAfterSeconds) },
+          },
+        ),
+      };
+    }
+
+    if (!meta.totpSecret || !(await verifyTotp(meta.totpSecret, code))) {
+      await this.authFailure();
+      return {
+        response: json(
+          { error: 'That Authenticator code is not valid.' },
+          { status: 401 },
+        ),
+      };
+    }
+
+    await this.authSuccess();
+    return { response: null };
+  }
+
+  async issueSession(meta, disableLegacy = false) {
+    const token = randomToken();
+    const now = new Date();
+    const expires = new Date(now.getTime() + SESSION_TTL_MS);
+
+    meta.sessions = sessionList(meta);
+    meta.sessions.push({
+      hash: await hashToken(token),
+      createdAt: now.toISOString(),
+      expiresAt: expires.toISOString(),
+    });
+
+    if (disableLegacy) delete meta.ownerTokenHash;
+
+    await this.putMeta(meta);
+    return token;
   }
 
   async initialise(request) {
@@ -154,9 +411,9 @@ export class SupervisorHub {
     const workspaceId = safeWorkspaceId(
       request.headers.get('x-workspace-id') || '',
     );
-    const ownerToken = request.headers.get('x-owner-token') || '';
+    const totpSecret = request.headers.get('x-totp-secret') || '';
 
-    if (!workspaceId || ownerToken.length < 32) {
+    if (!workspaceId || !/^[A-Z2-7]{32}$/.test(totpSecret)) {
       return json({ error: 'Invalid workspace setup.' }, { status: 400 });
     }
 
@@ -164,14 +421,106 @@ export class SupervisorHub {
     const meta = {
       workspaceId,
       createdAt,
-      ownerTokenHash: await hashToken(ownerToken),
+      totpSecret,
+      totpEnabled: false,
+      sessions: [],
     };
     const data = cloneDefaultData();
 
-    await this.state.storage.put('meta', meta);
+    await this.putMeta(meta);
     await this.putData(data);
 
-    return json({ state: await this.snapshot(meta, data) }, { status: 201 });
+    return json({ ok: true }, { status: 201 });
+  }
+
+  async confirmInitialAuthenticator(request) {
+    const meta = await this.getMeta();
+    if (!meta) return json({ error: 'Workspace not found.' }, { status: 404 });
+    if (meta.totpEnabled) {
+      return json(
+        { error: 'Authenticator is already enabled. Use sign in instead.' },
+        { status: 409 },
+      );
+    }
+
+    const body = await readObject(request);
+    const checked = await this.verifyAuthenticator(meta, body.code);
+    if (checked.response) return checked.response;
+
+    meta.totpEnabled = true;
+    const sessionToken = await this.issueSession(meta);
+    return json({
+      sessionToken,
+      state: await this.snapshot(meta),
+    });
+  }
+
+  async loginWithAuthenticator(request) {
+    const meta = await this.getMeta();
+    if (!meta) return json({ error: 'Workspace not found.' }, { status: 404 });
+    if (!meta.totpEnabled) {
+      return json(
+        {
+          error:
+            'Google Authenticator has not been enabled for this workspace yet.',
+        },
+        { status: 409 },
+      );
+    }
+
+    const body = await readObject(request);
+    const checked = await this.verifyAuthenticator(meta, body.code);
+    if (checked.response) return checked.response;
+
+    const sessionToken = await this.issueSession(meta);
+    return json({
+      sessionToken,
+      state: await this.snapshot(meta),
+    });
+  }
+
+  async beginLegacyEnrollment() {
+    const meta = await this.getMeta();
+    if (!meta) return json({ error: 'Workspace not found.' }, { status: 404 });
+    if (meta.totpEnabled) {
+      return json(
+        { error: 'Google Authenticator is already enabled.' },
+        { status: 409 },
+      );
+    }
+
+    const totpSecret = generateTotpSecret();
+    meta.totpSecret = totpSecret;
+    await this.putMeta(meta);
+
+    return json({
+      workspaceId: meta.workspaceId,
+      totpSecret,
+      otpauthUri: otpauthUri(meta.workspaceId, totpSecret),
+    });
+  }
+
+  async confirmLegacyEnrollment(request) {
+    const meta = await this.getMeta();
+    if (!meta) return json({ error: 'Workspace not found.' }, { status: 404 });
+    if (meta.totpEnabled) {
+      return json(
+        { error: 'Google Authenticator is already enabled.' },
+        { status: 409 },
+      );
+    }
+
+    const body = await readObject(request);
+    const checked = await this.verifyAuthenticator(meta, body.code);
+    if (checked.response) return checked.response;
+
+    meta.totpEnabled = true;
+    const sessionToken = await this.issueSession(meta, true);
+
+    return json({
+      sessionToken,
+      state: await this.snapshot(meta),
+    });
   }
 
   async createEntry(request) {
@@ -202,7 +551,10 @@ export class SupervisorHub {
       else if (type === 'adminEducationResources') {
         client = 'Admin / Education / Resources';
       } else {
-        return json({ error: 'Client is required for this entry type.' }, { status: 400 });
+        return json(
+          { error: 'Client is required for this entry type.' },
+          { status: 400 },
+        );
       }
     }
 
@@ -276,7 +628,10 @@ export class SupervisorHub {
     data.entries.push(entry);
     await this.putData(data);
 
-    return json({ state: await this.snapshot(null, data), entry }, { status: 201 });
+    return json(
+      { state: await this.snapshot(null, data), entry },
+      { status: 201 },
+    );
   }
 
   async deleteEntry(entryId) {
@@ -342,7 +697,10 @@ export class SupervisorHub {
     data.actions.push(action);
     await this.putData(data);
 
-    return json({ state: await this.snapshot(null, data), action }, { status: 201 });
+    return json(
+      { state: await this.snapshot(null, data), action },
+      { status: 201 },
+    );
   }
 
   async setGeneralAction(request, actionId) {
@@ -363,61 +721,87 @@ export class SupervisorHub {
   }
 
   async fetch(request) {
-    const url = new URL(request.url);
-    const workspaceMatch = url.pathname.match(
-      /^\/api\/workspace\/([a-f0-9]{16})(\/.*)?$/i,
-    );
+    try {
+      const url = new URL(request.url);
+      const workspaceMatch = url.pathname.match(
+        /^\/api\/workspace\/([a-f0-9]{16})(\/.*)?$/i,
+      );
 
-    if (!workspaceMatch) {
-      return json({ error: 'Invalid workspace route.' }, { status: 404 });
-    }
+      if (!workspaceMatch) {
+        return json({ error: 'Invalid workspace route.' }, { status: 404 });
+      }
 
-    const suffix = workspaceMatch[2] || '/';
+      const suffix = workspaceMatch[2] || '/';
 
-    if (suffix === '/init' && request.method === 'POST') {
-      return this.initialise(request);
-    }
+      if (suffix === '/init' && request.method === 'POST') {
+        return this.initialise(request);
+      }
 
-    const authError = await this.requireAuth(request);
-    if (authError) return authError;
+      if (suffix === '/auth/confirm' && request.method === 'POST') {
+        return this.confirmInitialAuthenticator(request);
+      }
 
-    if (suffix === '/snapshot' && request.method === 'GET') {
-      return json({ state: await this.snapshot() });
-    }
+      if (suffix === '/auth/login' && request.method === 'POST') {
+        return this.loginWithAuthenticator(request);
+      }
 
-    if (suffix === '/entries' && request.method === 'POST') {
-      return this.createEntry(request);
-    }
+      const authError = await this.requireAuth(request);
+      if (authError) return authError;
 
-    const entryDelete = suffix.match(/^\/entries\/([^/]+)$/);
-    if (entryDelete && request.method === 'DELETE') {
-      return this.deleteEntry(decodeURIComponent(entryDelete[1]));
-    }
+      if (suffix === '/auth/enrol' && request.method === 'POST') {
+        return this.beginLegacyEnrollment();
+      }
 
-    const visitAction = suffix.match(
-      /^\/entries\/([^/]+)\/actions\/([^/]+)$/,
-    );
-    if (visitAction && request.method === 'PATCH') {
-      return this.setVisitAction(
-        request,
-        decodeURIComponent(visitAction[1]),
-        decodeURIComponent(visitAction[2]),
+      if (suffix === '/auth/enrol/confirm' && request.method === 'POST') {
+        return this.confirmLegacyEnrollment(request);
+      }
+
+      if (suffix === '/snapshot' && request.method === 'GET') {
+        return json({ state: await this.snapshot() });
+      }
+
+      if (suffix === '/entries' && request.method === 'POST') {
+        return this.createEntry(request);
+      }
+
+      const entryDelete = suffix.match(/^\/entries\/([^/]+)$/);
+      if (entryDelete && request.method === 'DELETE') {
+        return this.deleteEntry(decodeURIComponent(entryDelete[1]));
+      }
+
+      const visitAction = suffix.match(
+        /^\/entries\/([^/]+)\/actions\/([^/]+)$/,
+      );
+      if (visitAction && request.method === 'PATCH') {
+        return this.setVisitAction(
+          request,
+          decodeURIComponent(visitAction[1]),
+          decodeURIComponent(visitAction[2]),
+        );
+      }
+
+      if (suffix === '/actions' && request.method === 'POST') {
+        return this.createGeneralAction(request);
+      }
+
+      const generalAction = suffix.match(/^\/actions\/([^/]+)$/);
+      if (generalAction && request.method === 'PATCH') {
+        return this.setGeneralAction(
+          request,
+          decodeURIComponent(generalAction[1]),
+        );
+      }
+
+      return json({ error: 'Workspace route not found.' }, { status: 404 });
+    } catch (error) {
+      return json(
+        {
+          error:
+            error instanceof Error ? error.message : 'NMRNL request failed.',
+        },
+        { status: 400 },
       );
     }
-
-    if (suffix === '/actions' && request.method === 'POST') {
-      return this.createGeneralAction(request);
-    }
-
-    const generalAction = suffix.match(/^\/actions\/([^/]+)$/);
-    if (generalAction && request.method === 'PATCH') {
-      return this.setGeneralAction(
-        request,
-        decodeURIComponent(generalAction[1]),
-      );
-    }
-
-    return json({ error: 'Workspace route not found.' }, { status: 404 });
   }
 }
 
@@ -430,6 +814,7 @@ export default {
         ok: true,
         app: 'NMRNL',
         service: 'pvp-sim',
+        auth: 'totp',
         storage: 'durable-object',
         now: new Date().toISOString(),
       });
@@ -437,7 +822,7 @@ export default {
 
     if (url.pathname === '/api/workspace' && request.method === 'POST') {
       const workspaceId = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
-      const ownerToken = randomToken();
+      const totpSecret = generateTotpSecret();
       const objectId = env.SUPERVISOR_HUB.idFromName('nmrnl:' + workspaceId);
       const stub = env.SUPERVISOR_HUB.get(objectId);
       const initRequest = new Request(
@@ -446,22 +831,24 @@ export default {
           method: 'POST',
           headers: {
             'x-workspace-id': workspaceId,
-            'x-owner-token': ownerToken,
+            'x-totp-secret': totpSecret,
           },
         },
       );
 
       const initialised = await stub.fetch(initRequest);
       if (!initialised.ok) {
-        return json({ error: 'Could not initialise NMRNL workspace.' }, { status: 500 });
+        return json(
+          { error: 'Could not initialise NMRNL workspace.' },
+          { status: 500 },
+        );
       }
 
-      const payload = await initialised.json();
       return json(
         {
           workspaceId,
-          ownerToken,
-          state: payload.state,
+          totpSecret,
+          otpauthUri: otpauthUri(workspaceId, totpSecret),
         },
         { status: 201 },
       );

@@ -23,11 +23,18 @@ The pre-NMRNL state of this repository is preserved on:
 - Entries search and type filtering
 - Mobile + desktop navigation
 
-## Privacy model
+## Authentication and privacy
 
-Each NMRNL workspace is a separate Durable Object. Creating a workspace returns a random Workspace ID and 256-bit owner key. The key is stored only in the browser and is required for every read/write request.
+Each NMRNL workspace is a separate Durable Object and is enrolled into a TOTP authenticator during setup.
 
-Back up the Workspace ID and owner key from the Workspace screen before using another device.
+1. Create a workspace.
+2. Scan the generated QR code with Google Authenticator (or another compatible TOTP app).
+3. Verify the first 6-digit code.
+4. NMRNL issues a temporary browser session token.
+
+A new browser signs in with the Workspace ID plus a current 6-digit Authenticator code. TOTP attempts are rate-limited inside the workspace Durable Object.
+
+Legacy owner-key workspaces can be upgraded in-place from the Workspace screen. Once the QR setup is confirmed, the old owner-token bypass is removed.
 
 ## Cloudflare deployment name
 

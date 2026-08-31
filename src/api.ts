@@ -3,20 +3,57 @@ import type {
   GeneralAction,
   Mode,
   WorkspaceCredentials,
+  WorkspaceSetupChallenge,
   WorkspaceState,
 } from './model';
 
-const STORAGE_KEY = 'nmrnl.private-workspace.v1';
+const SESSION_KEY = 'nmrnl.auth-session.v2';
+const WORKSPACE_KEY = 'nmrnl.workspace-id.v2';
+const LEGACY_KEY = 'nmrnl.private-workspace.v1';
+
+type LegacyCredentials = {
+  workspaceId?: string;
+  ownerToken?: string;
+};
+
+export function loadKnownWorkspaceId(): string {
+  try {
+    const saved = window.localStorage.getItem(WORKSPACE_KEY)?.trim();
+    if (saved) return saved;
+
+    const legacyRaw = window.localStorage.getItem(LEGACY_KEY);
+    if (!legacyRaw) return '';
+    const legacy = JSON.parse(legacyRaw) as LegacyCredentials;
+    return legacy.workspaceId?.trim() || '';
+  } catch {
+    return '';
+  }
+}
 
 export function loadCredentials(): WorkspaceCredentials | null {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const value = JSON.parse(raw) as Partial<WorkspaceCredentials>;
-    if (!value.workspaceId || !value.ownerToken) return null;
+    const raw = window.sessionStorage.getItem(SESSION_KEY);
+    if (raw) {
+      const value = JSON.parse(raw) as Partial<WorkspaceCredentials>;
+      if (value.workspaceId && value.sessionToken) {
+        return {
+          workspaceId: value.workspaceId,
+          sessionToken: value.sessionToken,
+        };
+      }
+    }
+
+    // Backwards compatibility for workspaces created before Authenticator
+    // enrollment existed. The legacy owner token is accepted only until that
+    // workspace completes the one-time TOTP upgrade.
+    const legacyRaw = window.localStorage.getItem(LEGACY_KEY);
+    if (!legacyRaw) return null;
+    const legacy = JSON.parse(legacyRaw) as LegacyCredentials;
+    if (!legacy.workspaceId || !legacy.ownerToken) return null;
+
     return {
-      workspaceId: value.workspaceId,
-      ownerToken: value.ownerToken,
+      workspaceId: legacy.workspaceId,
+      sessionToken: legacy.ownerToken,
     };
   } catch {
     return null;
@@ -24,11 +61,17 @@ export function loadCredentials(): WorkspaceCredentials | null {
 }
 
 export function saveCredentials(credentials: WorkspaceCredentials): void {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(credentials));
+  window.localStorage.setItem(WORKSPACE_KEY, credentials.workspaceId);
+  window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(credentials));
 }
 
 export function clearCredentials(): void {
-  window.localStorage.removeItem(STORAGE_KEY);
+  window.sessionStorage.removeItem(SESSION_KEY);
+  window.localStorage.removeItem(LEGACY_KEY);
+}
+
+export function rememberWorkspaceId(workspaceId: string): void {
+  window.localStorage.setItem(WORKSPACE_KEY, workspaceId);
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -44,19 +87,18 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return payload;
 }
 
-async function workspaceRequest<T>(
-  credentials: WorkspaceCredentials,
+async function authRequest<T>(
+  workspaceId: string,
   path: string,
   init?: RequestInit,
 ): Promise<T> {
   const response = await fetch(
-    '/api/workspace/' + encodeURIComponent(credentials.workspaceId) + path,
+    '/api/workspace/' + encodeURIComponent(workspaceId) + path,
     {
       ...init,
       cache: 'no-store',
       headers: {
         'content-type': 'application/json',
-        authorization: 'Bearer ' + credentials.ownerToken,
         ...(init?.headers || {}),
       },
     },
@@ -65,24 +107,100 @@ async function workspaceRequest<T>(
   return parseResponse<T>(response);
 }
 
-export async function createWorkspace(): Promise<{
-  credentials: WorkspaceCredentials;
-  state: WorkspaceState;
-}> {
+async function workspaceRequest<T>(
+  credentials: WorkspaceCredentials,
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  return authRequest<T>(credentials.workspaceId, path, {
+    ...init,
+    headers: {
+      authorization: 'Bearer ' + credentials.sessionToken,
+      ...(init?.headers || {}),
+    },
+  });
+}
+
+export async function createWorkspace(): Promise<WorkspaceSetupChallenge> {
   const response = await fetch('/api/workspace', {
     method: 'POST',
     cache: 'no-store',
   });
-  const payload = await parseResponse<{
-    workspaceId: string;
-    ownerToken: string;
+
+  return parseResponse<WorkspaceSetupChallenge>(response);
+}
+
+export async function confirmWorkspaceTotp(
+  workspaceId: string,
+  code: string,
+): Promise<{
+  credentials: WorkspaceCredentials;
+  state: WorkspaceState;
+}> {
+  const payload = await authRequest<{
+    sessionToken: string;
     state: WorkspaceState;
-  }>(response);
+  }>(workspaceId, '/auth/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+
+  return {
+    credentials: { workspaceId, sessionToken: payload.sessionToken },
+    state: payload.state,
+  };
+}
+
+export async function loginWithTotp(
+  workspaceId: string,
+  code: string,
+): Promise<{
+  credentials: WorkspaceCredentials;
+  state: WorkspaceState;
+}> {
+  const payload = await authRequest<{
+    sessionToken: string;
+    state: WorkspaceState;
+  }>(workspaceId, '/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+
+  return {
+    credentials: { workspaceId, sessionToken: payload.sessionToken },
+    state: payload.state,
+  };
+}
+
+export function beginAuthenticatorEnrollment(
+  credentials: WorkspaceCredentials,
+): Promise<WorkspaceSetupChallenge> {
+  return workspaceRequest<WorkspaceSetupChallenge>(
+    credentials,
+    '/auth/enrol',
+    { method: 'POST', body: '{}' },
+  );
+}
+
+export async function confirmAuthenticatorEnrollment(
+  credentials: WorkspaceCredentials,
+  code: string,
+): Promise<{
+  credentials: WorkspaceCredentials;
+  state: WorkspaceState;
+}> {
+  const payload = await workspaceRequest<{
+    sessionToken: string;
+    state: WorkspaceState;
+  }>(credentials, '/auth/enrol/confirm', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
 
   return {
     credentials: {
-      workspaceId: payload.workspaceId,
-      ownerToken: payload.ownerToken,
+      workspaceId: credentials.workspaceId,
+      sessionToken: payload.sessionToken,
     },
     state: payload.state,
   };

@@ -5,15 +5,22 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react';
+import QRCode from 'qrcode';
 
 import {
+  beginAuthenticatorEnrollment,
   clearCredentials,
+  confirmAuthenticatorEnrollment,
+  confirmWorkspaceTotp,
   createEntry,
   createGeneralAction,
   createWorkspace,
   deleteEntry,
   fetchWorkspace,
   loadCredentials,
+  loadKnownWorkspaceId,
+  loginWithTotp,
+  rememberWorkspaceId,
   saveCredentials,
   setGeneralActionCompleted,
   setVisitActionCompleted,
@@ -36,6 +43,7 @@ import {
   type TextContactDirection,
   type WorkEntry,
   type WorkspaceCredentials,
+  type WorkspaceSetupChallenge,
   type WorkspaceState,
 } from './model';
 
@@ -100,18 +108,50 @@ function WorkspaceSetup({
 }: {
   onConnected: (credentials: WorkspaceCredentials, state: WorkspaceState) => void;
 }) {
-  const [workspaceId, setWorkspaceId] = useState('');
-  const [ownerToken, setOwnerToken] = useState('');
-  const [busy, setBusy] = useState<'create' | 'connect' | null>(null);
+  const [workspaceId, setWorkspaceId] = useState(() => loadKnownWorkspaceId());
+  const [code, setCode] = useState('');
+  const [challenge, setChallenge] = useState<WorkspaceSetupChallenge | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [busy, setBusy] = useState<'create' | 'verify' | 'login' | null>(null);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    if (!challenge) {
+      setQrDataUrl('');
+      return;
+    }
+
+    QRCode.toDataURL(challenge.otpauthUri, {
+      width: 260,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+    })
+      .then((value) => {
+        if (active) setQrDataUrl(value);
+      })
+      .catch(() => {
+        if (active) setError('Could not render the Authenticator QR code.');
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [challenge]);
+
+  const updateCode = (value: string) => {
+    setCode(value.replace(/\D/g, '').slice(0, 6));
+  };
 
   const create = async () => {
     setBusy('create');
     setError('');
     try {
-      const result = await createWorkspace();
-      saveCredentials(result.credentials);
-      onConnected(result.credentials, result.state);
+      const nextChallenge = await createWorkspace();
+      rememberWorkspaceId(nextChallenge.workspaceId);
+      setWorkspaceId(nextChallenge.workspaceId);
+      setChallenge(nextChallenge);
+      setCode('');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not create workspace.');
     } finally {
@@ -119,26 +159,109 @@ function WorkspaceSetup({
     }
   };
 
-  const connect = async (event: FormEvent) => {
+  const verifySetup = async (event: FormEvent) => {
     event.preventDefault();
-    const credentials = {
-      workspaceId: workspaceId.trim(),
-      ownerToken: ownerToken.trim(),
-    };
-    if (!credentials.workspaceId || !credentials.ownerToken) return;
+    if (!challenge || code.length !== 6) return;
 
-    setBusy('connect');
+    setBusy('verify');
     setError('');
     try {
-      const state = await fetchWorkspace(credentials);
-      saveCredentials(credentials);
-      onConnected(credentials, state);
+      const result = await confirmWorkspaceTotp(challenge.workspaceId, code);
+      saveCredentials(result.credentials);
+      onConnected(result.credentials, result.state);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not open workspace.');
+      setError(reason instanceof Error ? reason.message : 'Authenticator code rejected.');
     } finally {
       setBusy(null);
     }
   };
+
+  const connect = async (event: FormEvent) => {
+    event.preventDefault();
+    const id = workspaceId.trim().toLowerCase();
+    if (!id || code.length !== 6) return;
+
+    setBusy('login');
+    setError('');
+    try {
+      const result = await loginWithTotp(id, code);
+      rememberWorkspaceId(id);
+      saveCredentials(result.credentials);
+      onConnected(result.credentials, result.state);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Authenticator code rejected.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (challenge) {
+    return (
+      <main className="setup-shell">
+        <section className="setup-card authenticator-card">
+          <div className="auth-header">
+            <div className="brand-mark">N</div>
+            <div>
+              <div className="eyebrow">GOOGLE AUTHENTICATOR SETUP</div>
+              <h1>Scan to secure NMRNL</h1>
+              <p className="setup-lead">
+                Open Google Authenticator, tap <b>+</b>, choose <b>Scan a QR code</b>,
+                then enter the 6-digit code it generates.
+              </p>
+            </div>
+          </div>
+
+          {error && <div className="error-banner">{error}</div>}
+
+          <div className="qr-shell">
+            {qrDataUrl ? (
+              <img src={qrDataUrl} alt="NMRNL Google Authenticator QR code" />
+            ) : (
+              <div className="qr-loading">Building QR…</div>
+            )}
+          </div>
+
+          <div className="setup-identity">
+            <span>Workspace ID</span>
+            <code>{challenge.workspaceId}</code>
+          </div>
+
+          <details className="manual-secret">
+            <summary>Can’t scan the QR?</summary>
+            <p>Choose “Enter a setup key” in Google Authenticator and use:</p>
+            <code>{challenge.totpSecret}</code>
+          </details>
+
+          <form className="totp-form" onSubmit={verifySetup}>
+            <label>
+              6-digit Authenticator code
+              <input
+                className="totp-input"
+                value={code}
+                onChange={(event) => updateCode(event.target.value)}
+                placeholder="000000"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                autoFocus
+              />
+            </label>
+            <button
+              className="primary big"
+              disabled={busy !== null || code.length !== 6}
+            >
+              {busy === 'verify' ? 'Verifying…' : 'Verify and open NMRNL'}
+            </button>
+          </form>
+
+          <p className="privacy-note">
+            Don’t close this page until the first code is verified. After verification,
+            the QR setup secret is no longer shown in NMRNL.
+          </p>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="setup-shell">
@@ -147,17 +270,20 @@ function WorkspaceSetup({
         <div className="eyebrow">PRIVATE CLOUDFLARE WORKSPACE</div>
         <h1>NMRNL</h1>
         <p className="setup-lead">
-          A web-first support work log for visits, contacts, case notes and follow-up
-          actions.
+          Secure your support workspace with a rotating code from Google Authenticator.
         </p>
 
         {error && <div className="error-banner">{error}</div>}
 
-        <button className="primary big" onClick={create} disabled={busy !== null}>
-          {busy === 'create' ? 'Creating…' : 'Create private workspace'}
+        <button className="primary big auth-create" onClick={create} disabled={busy !== null}>
+          <span className="button-icon">▦</span>
+          <span>
+            <strong>{busy === 'create' ? 'Creating…' : 'Create private workspace'}</strong>
+            <small>Set up Google Authenticator by QR</small>
+          </span>
         </button>
 
-        <div className="setup-divider"><span>or open an existing workspace</span></div>
+        <div className="setup-divider"><span>sign in to an existing workspace</span></div>
 
         <form className="setup-form" onSubmit={connect}>
           <label>
@@ -166,28 +292,33 @@ function WorkspaceSetup({
               value={workspaceId}
               onChange={(event) => setWorkspaceId(event.target.value)}
               placeholder="16-character workspace ID"
-              autoComplete="off"
+              autoComplete="username"
             />
           </label>
           <label>
-            Owner key
+            Google Authenticator code
             <input
-              value={ownerToken}
-              onChange={(event) => setOwnerToken(event.target.value)}
-              placeholder="Private owner key"
-              type="password"
-              autoComplete="off"
+              className="totp-input compact-code"
+              value={code}
+              onChange={(event) => updateCode(event.target.value)}
+              placeholder="000000"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
             />
           </label>
-          <button className="secondary" disabled={busy !== null}>
-            {busy === 'connect' ? 'Opening…' : 'Open workspace'}
+          <button className="secondary" disabled={busy !== null || code.length !== 6}>
+            {busy === 'login' ? 'Checking code…' : 'Open workspace'}
           </button>
         </form>
 
-        <p className="privacy-note">
-          Your owner key is stored only in this browser. NMRNL requires it for every
-          workspace request. Back it up from the Workspace screen after setup.
-        </p>
+        <div className="auth-security-note">
+          <span>✓</span>
+          <p>
+            No permanent owner key is stored in this browser. A successful
+            Authenticator code creates a temporary browser session.
+          </p>
+        </div>
       </section>
     </main>
   );
@@ -1027,19 +1158,85 @@ function ActionsScreen({
 function WorkspaceScreen({
   credentials,
   state,
+  onState,
+  onCredentials,
   disconnect,
 }: {
   credentials: WorkspaceCredentials;
   state: WorkspaceState;
+  onState: (state: WorkspaceState) => void;
+  onCredentials: (credentials: WorkspaceCredentials) => void;
   disconnect: () => void;
 }) {
-  const [showKey, setShowKey] = useState(false);
-  const [copied, setCopied] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [challenge, setChallenge] = useState<WorkspaceSetupChallenge | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
-  const copy = async (label: string, value: string) => {
-    await navigator.clipboard.writeText(value);
-    setCopied(label);
-    window.setTimeout(() => setCopied(''), 1800);
+  useEffect(() => {
+    let active = true;
+    if (!challenge) {
+      setQrDataUrl('');
+      return;
+    }
+
+    QRCode.toDataURL(challenge.otpauthUri, {
+      width: 240,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+    })
+      .then((value) => {
+        if (active) setQrDataUrl(value);
+      })
+      .catch(() => {
+        if (active) setError('Could not render the Authenticator QR code.');
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [challenge]);
+
+  const copyId = async () => {
+    await navigator.clipboard.writeText(credentials.workspaceId);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
+
+  const startEnrollment = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const next = await beginAuthenticatorEnrollment(credentials);
+      setChallenge(next);
+      setCode('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not start Authenticator setup.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmEnrollment = async (event: FormEvent) => {
+    event.preventDefault();
+    if (code.length !== 6) return;
+
+    setBusy(true);
+    setError('');
+    try {
+      const result = await confirmAuthenticatorEnrollment(credentials, code);
+      saveCredentials(result.credentials);
+      onCredentials(result.credentials);
+      onState(result.state);
+      setChallenge(null);
+      setCode('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Authenticator code rejected.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -1048,31 +1245,91 @@ function WorkspaceScreen({
         <div>
           <div className="eyebrow">PRIVATE WORKSPACE</div>
           <h2>Workspace</h2>
-          <p>Back up these details before signing in on another device.</p>
+          <p>Authentication and cloud workspace details.</p>
         </div>
       </section>
 
-      <Panel title="Workspace credentials" subtitle="Treat the owner key like a password">
-        <div className="credential-list">
-          <div>
-            <span>Workspace ID</span>
-            <code>{credentials.workspaceId}</code>
-            <button className="secondary compact" onClick={() => void copy('id', credentials.workspaceId)}>
-              {copied === 'id' ? 'Copied' : 'Copy'}
-            </button>
+      {error && <div className="error-banner">{error}</div>}
+
+      <Panel
+        title="Google Authenticator"
+        subtitle={
+          state.authenticatorEnabled
+            ? 'Required when signing in on a new browser'
+            : 'One-time security upgrade available'
+        }
+      >
+        {state.authenticatorEnabled ? (
+          <div className="auth-status-card enabled">
+            <div className="auth-status-icon">✓</div>
+            <div>
+              <strong>Authenticator enabled</strong>
+              <p>
+                NMRNL accepts a fresh 6-digit Google Authenticator code to create
+                a temporary browser session.
+              </p>
+            </div>
           </div>
-          <div>
-            <span>Owner key</span>
-            <code>{showKey ? credentials.ownerToken : '••••••••••••••••••••••••••••••••'}</code>
-            <div className="credential-actions">
-              <button className="secondary compact" onClick={() => setShowKey((value) => !value)}>
-                {showKey ? 'Hide' : 'Show'}
-              </button>
-              <button className="secondary compact" onClick={() => void copy('key', credentials.ownerToken)}>
-                {copied === 'key' ? 'Copied' : 'Copy'}
+        ) : challenge ? (
+          <div className="legacy-enrolment">
+            <div className="qr-shell small">
+              {qrDataUrl ? (
+                <img src={qrDataUrl} alt="NMRNL Google Authenticator QR code" />
+              ) : (
+                <div className="qr-loading">Building QR…</div>
+              )}
+            </div>
+            <div className="legacy-enrolment-copy">
+              <h3>Scan this QR</h3>
+              <p>
+                In Google Authenticator tap <b>+</b> → <b>Scan a QR code</b>.
+                Then verify the first 6-digit code below.
+              </p>
+              <details className="manual-secret">
+                <summary>Manual setup key</summary>
+                <code>{challenge.totpSecret}</code>
+              </details>
+              <form className="totp-form inline" onSubmit={confirmEnrollment}>
+                <input
+                  className="totp-input"
+                  value={code}
+                  onChange={(event) =>
+                    setCode(event.target.value.replace(/\D/g, '').slice(0, 6))
+                  }
+                  placeholder="000000"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                />
+                <button className="primary" disabled={busy || code.length !== 6}>
+                  {busy ? 'Verifying…' : 'Enable Authenticator'}
+                </button>
+              </form>
+            </div>
+          </div>
+        ) : (
+          <div className="auth-status-card legacy">
+            <div className="auth-status-icon">!</div>
+            <div>
+              <strong>Legacy owner-key workspace</strong>
+              <p>
+                Upgrade this workspace without losing entries. After the QR is
+                verified, the old owner-key login is disabled.
+              </p>
+              <button className="primary" onClick={() => void startEnrollment()} disabled={busy}>
+                {busy ? 'Starting…' : 'Enable Google Authenticator'}
               </button>
             </div>
           </div>
+        )}
+      </Panel>
+
+      <Panel title="Workspace ID" subtitle="Use this with your Authenticator code on another device">
+        <div className="workspace-id-row">
+          <code>{credentials.workspaceId}</code>
+          <button className="secondary compact" onClick={() => void copyId()}>
+            {copied ? 'Copied' : 'Copy ID'}
+          </button>
         </div>
       </Panel>
 
@@ -1088,10 +1345,20 @@ function WorkspaceScreen({
       <Panel title="This browser">
         <div className="danger-zone">
           <div>
-            <strong>Disconnect workspace</strong>
-            <p>This removes the workspace ID and owner key from this browser only. Cloud data is not deleted.</p>
+            <strong>{state.authenticatorEnabled ? 'Sign out' : 'Upgrade before signing out'}</strong>
+            <p>
+              {state.authenticatorEnabled
+                ? 'Ends this browser session. Your cloud data and Google Authenticator enrollment stay in place.'
+                : 'Complete the Google Authenticator QR setup above first so you can sign back in safely.'}
+            </p>
           </div>
-          <button className="danger-button" onClick={disconnect}>Disconnect</button>
+          <button
+            className="danger-button"
+            onClick={disconnect}
+            disabled={!state.authenticatorEnabled}
+          >
+            Sign out
+          </button>
         </div>
       </Panel>
     </div>
@@ -1279,8 +1546,10 @@ export function App() {
             <WorkspaceScreen
               state={state}
               credentials={credentials}
+              onState={setState}
+              onCredentials={setCredentials}
               disconnect={() => {
-                if (!window.confirm('Disconnect NMRNL from this browser? Make sure you backed up the owner key first.')) return;
+                if (!window.confirm('Sign out of NMRNL on this browser?')) return;
                 clearCredentials();
                 setCredentials(null);
                 setState(null);

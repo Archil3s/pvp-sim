@@ -149,6 +149,7 @@ export interface GeneralAction {
 export interface WorkspaceState {
   workspaceId: string;
   createdAt: string;
+  authenticatorEnabled: boolean;
   clients: Client[];
   entries: WorkEntry[];
   actions: GeneralAction[];
@@ -156,7 +157,13 @@ export interface WorkspaceState {
 
 export interface WorkspaceCredentials {
   workspaceId: string;
-  ownerToken: string;
+  sessionToken: string;
+}
+
+export interface WorkspaceSetupChallenge {
+  workspaceId: string;
+  totpSecret: string;
+  otpauthUri: string;
 }
 
 export interface EntryDraft {
