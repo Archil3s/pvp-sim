@@ -1,6 +1,13 @@
 export type Mode = 'work' | 'casework' | 'paye';
 
-export type Section = 'home' | 'quick' | 'entries' | 'actions' | 'workspace';
+export type Section =
+  | 'home'
+  | 'quick'
+  | 'entries'
+  | 'calendar'
+  | 'payPeriod'
+  | 'actions'
+  | 'workspace';
 
 export type EntryTypeKey =
   | 'homeVisit'

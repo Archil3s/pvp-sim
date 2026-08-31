@@ -28,6 +28,7 @@ import {
   confirmRecoveryAuthenticator,
   setGeneralActionCompleted,
   setVisitActionCompleted,
+  updateEntry,
 } from './api';
 import {
   ENTRY_TYPES,
@@ -1008,6 +1009,479 @@ function QuickEntryScreen({
   );
 }
 
+const EDIT_NOTE_OPTIONS = [
+  'Wellbeing', 'Safety Plan', 'Distress Support', 'Daily Living', 'Appointment',
+  'Transport', 'Advocacy', 'Crisis', 'Trauma Support', 'Boundaries',
+  'Family/Tamariki', 'Community', 'Prof. Contact', 'No Contact', 'Cancelled',
+  'No Show', 'Rescheduled', 'Client Rescheduled', 'Late Cancel', 'Cut Short',
+  'Follow-up Needed',
+];
+
+function EditEntryModal({
+  entry,
+  state,
+  credentials,
+  onState,
+  onClose,
+}: {
+  entry: WorkEntry;
+  state: WorkspaceState;
+  credentials: WorkspaceCredentials;
+  onState: (state: WorkspaceState) => void;
+  onClose: () => void;
+}) {
+  const [type, setType] = useState<EntryTypeKey>(entry.type);
+  const [client, setClient] = useState(entry.client);
+  const [date, setDate] = useState(entry.date);
+  const [startTime, setStartTime] = useState(entry.startTime);
+  const [minutes, setMinutes] = useState(entry.minutes);
+  const [notes, setNotes] = useState(entry.notes.join('\n'));
+  const [supportNote, setSupportNote] = useState(entry.supportNoteBreakdown);
+  const [importantText, setImportantText] = useState(entry.importantText);
+  const [direction, setDirection] = useState<TextContactDirection>(entry.textContactDirection);
+  const [replyNeeded, setReplyNeeded] = useState(entry.textReplyNeeded);
+  const [odometerStart, setOdometerStart] = useState(
+    entry.odometerStart == null ? '' : String(entry.odometerStart),
+  );
+  const [odometerEnd, setOdometerEnd] = useState(
+    entry.odometerEnd == null ? '' : String(entry.odometerEnd),
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const definition = entryType(type);
+  const clients = state.clients
+    .filter((item) => item.mode === entry.mode)
+    .map((item) => item.name)
+    .sort((a, b) => a.localeCompare(b));
+
+  const toggleNote = (note: string) => {
+    const current = notes.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+    setNotes(
+      (current.includes(note)
+        ? current.filter((item) => item !== note)
+        : [...current, note]
+      ).join('\n'),
+    );
+  };
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    setError('');
+
+    if (definition.requiresClient && !client.trim()) {
+      setError('Choose or enter a client before saving.');
+      return;
+    }
+
+    const startOdo =
+      type === 'homeVisit' && odometerStart.trim() ? Number(odometerStart) : null;
+    const endOdo =
+      type === 'homeVisit' && odometerEnd.trim() ? Number(odometerEnd) : null;
+
+    if (
+      startOdo != null &&
+      endOdo != null &&
+      Number.isFinite(startOdo) &&
+      Number.isFinite(endOdo) &&
+      endOdo < startOdo
+    ) {
+      setError('Finish odometer must be higher than start.');
+      return;
+    }
+
+    const draft: EntryDraft = {
+      mode: entry.mode,
+      client:
+        client.trim() ||
+        (type === 'emailProfessional'
+          ? 'Professional email'
+          : type === 'adminEducationResources'
+            ? 'Admin / Education / Resources'
+            : entry.client),
+      type,
+      date,
+      startTime,
+      minutes: Math.max(1, Math.min(1440, Number(minutes) || 1)),
+      notes: notes.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+      supportNoteBreakdown: supportNote.trim(),
+      nextAction: '',
+      importantText,
+      textContactDirection: direction,
+      textReplyNeeded: replyNeeded,
+      odometerStart: startOdo != null && Number.isFinite(startOdo) ? startOdo : null,
+      odometerEnd: endOdo != null && Number.isFinite(endOdo) ? endOdo : null,
+    };
+
+    setSaving(true);
+    try {
+      onState(await updateEntry(credentials, entry.id, draft));
+      onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not update entry.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <form
+        className="edit-entry-modal"
+        onSubmit={save}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="edit-entry-header">
+          <div>
+            <div className="eyebrow">EDIT WORK ENTRY</div>
+            <h2>{entry.client}</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose}>×</button>
+        </div>
+
+        {error && <div className="error-banner">{error}</div>}
+
+        <div className="edit-entry-grid">
+          <label className="field wide">
+            <span>Client</span>
+            <input list="edit-entry-clients" value={client} onChange={(e) => setClient(e.target.value)} />
+            <datalist id="edit-entry-clients">
+              {clients.map((name) => <option key={name} value={name} />)}
+            </datalist>
+          </label>
+          <label className="field">
+            <span>Type</span>
+            <select value={type} onChange={(e) => setType(e.target.value as EntryTypeKey)}>
+              {entryTypesForMode(entry.mode).map((item) => (
+                <option key={item.key} value={item.key}>{item.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Date</span>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </label>
+          <label className="field">
+            <span>Start</span>
+            <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+          </label>
+          <label className="field">
+            <span>Minutes</span>
+            <input type="number" min="1" max="1440" value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} />
+          </label>
+        </div>
+
+        {type === 'homeVisit' && (
+          <div className="edit-entry-section">
+            <strong>Travel</strong>
+            <div className="form-grid two">
+              <label className="field">
+                <span>Start odometer</span>
+                <input inputMode="decimal" value={odometerStart} onChange={(e) => setOdometerStart(e.target.value)} />
+              </label>
+              <label className="field">
+                <span>Finish odometer</span>
+                <input inputMode="decimal" value={odometerEnd} onChange={(e) => setOdometerEnd(e.target.value)} />
+              </label>
+            </div>
+          </div>
+        )}
+
+        {type === 'textNote' && (
+          <div className="edit-entry-section">
+            <strong>Written contact</strong>
+            <div className="form-grid two">
+              <label className="field">
+                <span>Direction</span>
+                <select value={direction} onChange={(e) => setDirection(e.target.value as TextContactDirection)}>
+                  <option value="received">Received</option>
+                  <option value="sent">Sent</option>
+                  <option value="exchange">Exchange</option>
+                </select>
+              </label>
+              <label className="check-card">
+                <input type="checkbox" checked={replyNeeded} onChange={(e) => setReplyNeeded(e.target.checked)} />
+                <span><strong>Reply needed</strong><small>Keep visible for follow-up.</small></span>
+              </label>
+            </div>
+          </div>
+        )}
+
+        <div className="edit-entry-section">
+          <strong>Quick note tags</strong>
+          <div className="tag-picker">
+            {EDIT_NOTE_OPTIONS.map((note) => {
+              const selected = notes.split(/\r?\n/).map((item) => item.trim()).includes(note);
+              return (
+                <button
+                  type="button"
+                  key={note}
+                  className={selected ? 'selected' : ''}
+                  onClick={() => toggleNote(note)}
+                >
+                  {note}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="form-grid two note-grid">
+          <label className="field">
+            <span>Notes</span>
+            <textarea rows={6} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </label>
+          <label className="field">
+            <span>Support note breakdown</span>
+            <textarea rows={6} value={supportNote} onChange={(e) => setSupportNote(e.target.value)} />
+          </label>
+        </div>
+
+        <label className="check-card edit-important">
+          <input type="checkbox" checked={importantText} onChange={(e) => setImportantText(e.target.checked)} />
+          <span><strong>Mark important</strong><small>Highlight significant written contact.</small></span>
+        </label>
+
+        <div className="edit-entry-actions">
+          <button type="button" className="secondary" onClick={onClose}>Cancel</button>
+          <button className="primary" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function entryDateTime(entry: WorkEntry): Date {
+  return new Date(entry.date + 'T' + entry.startTime + ':00');
+}
+
+function entriesOverlap(entries: WorkEntry[]): Set<string> {
+  const result = new Set<string>();
+  const sorted = [...entries].sort(
+    (a, b) => entryDateTime(a).getTime() - entryDateTime(b).getTime(),
+  );
+
+  for (let index = 0; index < sorted.length; index += 1) {
+    const current = sorted[index];
+    const currentStart = entryDateTime(current).getTime();
+    const currentEnd = currentStart + current.minutes * 60_000;
+
+    for (let otherIndex = index + 1; otherIndex < sorted.length; otherIndex += 1) {
+      const other = sorted[otherIndex];
+      const otherStart = entryDateTime(other).getTime();
+      if (otherStart >= currentEnd) break;
+      const otherEnd = otherStart + other.minutes * 60_000;
+      if (currentStart < otherEnd && otherStart < currentEnd) {
+        result.add(current.id);
+        result.add(other.id);
+      }
+    }
+  }
+
+  return result;
+}
+
+function CalendarScreen({ state }: { state: WorkspaceState }) {
+  const workEntries = state.entries
+    .filter((entry) => entry.mode === 'work')
+    .sort((a, b) => entryDateTime(a).getTime() - entryDateTime(b).getTime());
+
+  const [selectedDate, setSelectedDate] = useState(localDateValue());
+  const selected = workEntries.filter((entry) => entry.date === selectedDate);
+  const overlapIds = entriesOverlap(selected);
+
+  const anchor = new Date(selectedDate + 'T12:00:00');
+  const start = new Date(anchor);
+  start.setDate(anchor.getDate() - 6);
+  const days = Array.from({ length: 14 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return localDateValue(date);
+  });
+
+  const selectedMinutes = selected.reduce((sum, entry) => sum + entry.minutes, 0);
+  const selectedKm = selected.reduce((sum, entry) => sum + entryKilometres(entry), 0);
+  const missingNotes = selected.filter((entry) => !entry.supportNoteBreakdown.trim()).length;
+  const openActions = selected.reduce(
+    (sum, entry) => sum + entry.nextActions.filter((action) => !action.completedAt).length,
+    0,
+  );
+
+  return (
+    <div className="page-stack">
+      <section className="page-title">
+        <div>
+          <div className="eyebrow">WORK PLANNER</div>
+          <h2>Calendar</h2>
+          <p>See visits, overlaps, missing notes and follow-ups by day.</p>
+        </div>
+        <label className="calendar-date-jump">
+          <span>Jump to date</span>
+          <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+        </label>
+      </section>
+
+      <Panel title="14-day work view" subtitle="Red = missing support note · Amber = open action · Orange = overlap">
+        <div className="calendar-day-grid">
+          {days.map((day) => {
+            const entries = workEntries.filter((entry) => entry.date === day);
+            const overlaps = entriesOverlap(entries);
+            const missing = entries.some((entry) => !entry.supportNoteBreakdown.trim());
+            const actions = entries.some((entry) => entry.nextActions.some((action) => !action.completedAt));
+            return (
+              <button
+                key={day}
+                className={'calendar-day ' + (day === selectedDate ? 'selected' : '')}
+                onClick={() => setSelectedDate(day)}
+              >
+                <small>{new Date(day + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short' })}</small>
+                <strong>{new Date(day + 'T12:00:00').getDate()}</strong>
+                <span>{entries.length} entr{entries.length === 1 ? 'y' : 'ies'}</span>
+                <div className="calendar-dots">
+                  <i className={missing ? 'danger' : ''} />
+                  <i className={actions ? 'warn' : ''} />
+                  <i className={overlaps.size ? 'overlap' : ''} />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </Panel>
+
+      <div className="stat-grid compact-stats">
+        <StatCard label="Entries" value={String(selected.length)} />
+        <StatCard label="Hours" value={formatHours(selectedMinutes)} />
+        <StatCard label="KM" value={selectedKm.toFixed(1)} />
+        <StatCard label="Missing notes" value={String(missingNotes)} />
+        <StatCard label="Open actions" value={String(openActions)} />
+        <StatCard label="Overlaps" value={String(overlapIds.size)} />
+      </div>
+
+      <Panel title={formatDate(selectedDate)} subtitle="Work entries for the selected day">
+        {selected.length === 0 ? (
+          <EmptyState title="No work entries" detail="Choose another day or add an entry." />
+        ) : (
+          <div className="calendar-entry-list">
+            {selected
+              .sort((a, b) => a.startTime.localeCompare(b.startTime))
+              .map((entry) => (
+                <div className="calendar-entry-item" key={entry.id}>
+                  <div>
+                    <strong>{entry.startTime} · {entry.client}</strong>
+                    <span>{entryType(entry.type).label} · {entry.minutes} min · {entryKilometres(entry).toFixed(1)} km</span>
+                  </div>
+                  <div className="calendar-entry-flags">
+                    {!entry.supportNoteBreakdown.trim() && <b className="flag danger">Missing note</b>}
+                    {entry.nextActions.some((action) => !action.completedAt) && <b className="flag warn">Follow-up</b>}
+                    {overlapIds.has(entry.id) && <b className="flag overlap">Overlap</b>}
+                    {entry.googleCalendarEntered && <b className="flag ok">Calendar entered</b>}
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function fortnightStartFor(date: Date): Date {
+  const anchor = new Date('2025-12-14T12:00:00');
+  const dayMs = 86_400_000;
+  const diff = Math.floor((date.getTime() - anchor.getTime()) / dayMs);
+  const offset = ((diff % 14) + 14) % 14;
+  const start = new Date(date);
+  start.setDate(date.getDate() - offset);
+  start.setHours(12, 0, 0, 0);
+  return start;
+}
+
+function PayPeriodScreen({ state }: { state: WorkspaceState }) {
+  const [offset, setOffset] = useState(0);
+  const baseStart = fortnightStartFor(new Date());
+  const start = new Date(baseStart);
+  start.setDate(baseStart.getDate() + offset * 14);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 13);
+  const startKey = localDateValue(start);
+  const endKey = localDateValue(end);
+
+  const entries = state.entries
+    .filter((entry) => entry.mode === 'work')
+    .filter((entry) => entry.date >= startKey && entry.date <= endKey)
+    .sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
+
+  const totalMinutes = entries.reduce((sum, entry) => sum + entry.minutes, 0);
+  const totalKm = entries.reduce((sum, entry) => sum + entryKilometres(entry), 0);
+  const clients = new Set(entries.map((entry) => entry.client)).size;
+  const missingNotes = entries.filter((entry) => !entry.supportNoteBreakdown.trim()).length;
+  const openActions = entries.reduce(
+    (sum, entry) => sum + entry.nextActions.filter((action) => !action.completedAt).length,
+    0,
+  );
+
+  const byDay = entries.reduce<Record<string, WorkEntry[]>>((groups, entry) => {
+    (groups[entry.date] ||= []).push(entry);
+    return groups;
+  }, {});
+
+  return (
+    <div className="page-stack">
+      <section className="page-title">
+        <div>
+          <div className="eyebrow">WORK TOTALS</div>
+          <h2>Pay Period</h2>
+          <p>Fortnight totals and daily work breakdown.</p>
+        </div>
+        <div className="period-controls">
+          <button className="secondary compact" onClick={() => setOffset((value) => value - 1)}>← Previous</button>
+          <button className="secondary compact" onClick={() => setOffset(0)}>Current</button>
+          <button className="secondary compact" onClick={() => setOffset((value) => value + 1)}>Next →</button>
+        </div>
+      </section>
+
+      <Panel title={`${formatDate(startKey)} – ${formatDate(endKey)}`} subtitle="Two-week work period">
+        <div className="stat-grid compact-stats">
+          <StatCard label="Entries" value={String(entries.length)} />
+          <StatCard label="Hours" value={formatHours(totalMinutes)} />
+          <StatCard label="KM" value={totalKm.toFixed(1)} />
+          <StatCard label="Clients" value={String(clients)} />
+          <StatCard label="Missing notes" value={String(missingNotes)} />
+          <StatCard label="Open actions" value={String(openActions)} />
+        </div>
+      </Panel>
+
+      <Panel title="Daily breakdown">
+        {entries.length === 0 ? (
+          <EmptyState title="No work recorded" detail="This fortnight has no Work mode entries." />
+        ) : (
+          <div className="pay-period-days">
+            {Object.entries(byDay).map(([day, dayEntries]) => {
+              const minutes = dayEntries.reduce((sum, entry) => sum + entry.minutes, 0);
+              const km = dayEntries.reduce((sum, entry) => sum + entryKilometres(entry), 0);
+              return (
+                <div className="pay-period-day" key={day}>
+                  <div className="pay-period-day-head">
+                    <strong>{formatDate(day)}</strong>
+                    <span>{formatHours(minutes)} h · {km.toFixed(1)} km · {dayEntries.length} entries</span>
+                  </div>
+                  {dayEntries.map((entry) => (
+                    <div className="pay-period-entry" key={entry.id}>
+                      <span>{entry.startTime}</span>
+                      <strong>{entry.client}</strong>
+                      <small>{entryType(entry.type).shortLabel} · {entry.minutes}m</small>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 function EntriesScreen({
   state,
   mode,
@@ -1022,6 +1496,7 @@ function EntriesScreen({
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | EntryTypeKey>('all');
   const [busyId, setBusyId] = useState('');
+  const [editing, setEditing] = useState<WorkEntry | null>(null);
   const [error, setError] = useState('');
 
   const entries = useMemo(() => {
@@ -1142,14 +1617,23 @@ function EntriesScreen({
                     <h3>{entry.client}</h3>
                     <p>{formatDate(entry.date)} · {entry.startTime} · {entry.minutes} min</p>
                   </div>
-                  <button
-                    className="icon-button danger"
-                    onClick={() => void remove(entry)}
-                    disabled={busyId === entry.id}
-                    title="Delete entry"
-                  >
-                    ×
-                  </button>
+                  <div className="entry-card-actions">
+                    <button
+                      className="icon-button"
+                      onClick={() => setEditing(entry)}
+                      title="Edit entry"
+                    >
+                      ✎
+                    </button>
+                    <button
+                      className="icon-button danger"
+                      onClick={() => void remove(entry)}
+                      disabled={busyId === entry.id}
+                      title="Delete entry"
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
 
                 {(entry.notes.length > 0 || entry.supportNoteBreakdown) && (
@@ -1182,6 +1666,16 @@ function EntriesScreen({
             );
           })}
         </div>
+      )}
+
+      {editing && (
+        <EditEntryModal
+          entry={editing}
+          state={state}
+          credentials={credentials}
+          onState={onState}
+          onClose={() => setEditing(null)}
+        />
       )}
     </div>
   );
@@ -1728,6 +2222,12 @@ export function App() {
     { key: 'home', label: 'Home', icon: '⌂' },
     { key: 'quick', label: 'Quick Entry', icon: '+' },
     { key: 'entries', label: 'Entries', icon: '▤' },
+    ...(mode === 'work'
+      ? [
+          { key: 'calendar' as Section, label: 'Calendar', icon: '▦' },
+          { key: 'payPeriod' as Section, label: 'Pay Period', icon: '◫' },
+        ]
+      : []),
     { key: 'actions', label: 'Actions', icon: '✓' },
     { key: 'workspace', label: 'Workspace', icon: '⚙' },
   ];
@@ -1774,7 +2274,15 @@ export function App() {
               <button
                 key={option.key}
                 className={mode === option.key ? 'active' : ''}
-                onClick={() => setMode(option.key)}
+                onClick={() => {
+                  setMode(option.key);
+                  if (
+                    option.key !== 'work' &&
+                    (section === 'calendar' || section === 'payPeriod')
+                  ) {
+                    setSection('home');
+                  }
+                }}
               >
                 {option.label}
               </button>
@@ -1808,6 +2316,12 @@ export function App() {
               onState={setState}
             />
           )}
+          {section === 'calendar' && mode === 'work' && (
+            <CalendarScreen state={state} />
+          )}
+          {section === 'payPeriod' && mode === 'work' && (
+            <PayPeriodScreen state={state} />
+          )}
           {section === 'actions' && (
             <ActionsScreen
               state={state}
@@ -1833,7 +2347,11 @@ export function App() {
         </div>
 
         <nav className="bottom-nav">
-          {navItems.slice(0, 5).map((item) => (
+          {navItems
+            .filter((item) =>
+              ['home', 'quick', 'entries', 'actions', 'workspace'].includes(item.key),
+            )
+            .map((item) => (
             <button
               key={item.key}
               className={section === item.key ? 'active' : ''}

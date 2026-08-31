@@ -282,6 +282,21 @@ export function createEntry(
   }).then((payload) => payload.state);
 }
 
+export function updateEntry(
+  credentials: WorkspaceCredentials,
+  entryId: string,
+  draft: EntryDraft,
+): Promise<WorkspaceState> {
+  return workspaceRequest<{ state: WorkspaceState }>(
+    credentials,
+    '/entries/' + encodeURIComponent(entryId),
+    {
+      method: 'PATCH',
+      body: JSON.stringify(draft),
+    },
+  ).then((payload) => payload.state);
+}
+
 export function deleteEntry(
   credentials: WorkspaceCredentials,
   entryId: string,

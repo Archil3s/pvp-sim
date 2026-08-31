@@ -746,6 +746,83 @@ export class SupervisorHub {
     );
   }
 
+
+  async updateEntry(request, entryId) {
+    const body = await readObject(request);
+    const data = await this.getData();
+    const entry = data.entries.find((item) => item.id === entryId);
+
+    if (!entry) {
+      return json({ error: 'Entry not found.' }, { status: 404 });
+    }
+
+    const mode = modeValue(body.mode || entry.mode);
+    const type = stringValue(body.type || entry.type);
+    const date = stringValue(body.date || entry.date);
+    const startTime = stringValue(body.startTime || entry.startTime);
+    const client = stringValue(body.client || entry.client);
+    const minutes = Math.max(
+      1,
+      Math.min(1440, Math.round(numberValue(body.minutes) || entry.minutes || 1)),
+    );
+
+    if (!ENTRY_TYPES.has(type)) {
+      return json({ error: 'Unknown entry type.' }, { status: 400 });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return json({ error: 'A valid date is required.' }, { status: 400 });
+    }
+    if (!/^\d{2}:\d{2}$/.test(startTime)) {
+      return json({ error: 'A valid start time is required.' }, { status: 400 });
+    }
+    if (!client) {
+      return json({ error: 'Client is required.' }, { status: 400 });
+    }
+
+    let clientRecord = data.clients.find(
+      (item) =>
+        item.mode === mode &&
+        String(item.name || '').toLowerCase() === client.toLowerCase(),
+    );
+
+    if (!clientRecord) {
+      clientRecord = {
+        id: crypto.randomUUID(),
+        name: client,
+        mode,
+        createdAt: new Date().toISOString(),
+      };
+      data.clients.push(clientRecord);
+    }
+
+    entry.mode = mode;
+    entry.clientId = clientRecord.id;
+    entry.client = client;
+    entry.type = type;
+    entry.date = date;
+    entry.startTime = startTime;
+    entry.minutes = minutes;
+    entry.notes = Array.isArray(body.notes)
+      ? body.notes.map((item) => stringValue(item)).filter(Boolean).slice(0, 100)
+      : entry.notes;
+    entry.supportNoteBreakdown = stringValue(body.supportNoteBreakdown);
+    entry.importantText = body.importantText === true;
+    entry.textContactDirection = TEXT_DIRECTIONS.has(
+      stringValue(body.textContactDirection),
+    )
+      ? stringValue(body.textContactDirection)
+      : 'received';
+    entry.textReplyNeeded = body.textReplyNeeded === true;
+    entry.odometerStart =
+      type === 'homeVisit' ? numberValue(body.odometerStart) : null;
+    entry.odometerEnd =
+      type === 'homeVisit' ? numberValue(body.odometerEnd) : null;
+    entry.updatedAt = new Date().toISOString();
+
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data), entry });
+  }
+
   async deleteEntry(entryId) {
     const data = await this.getData();
     const before = data.entries.length;
@@ -892,6 +969,11 @@ export class SupervisorHub {
 
       if (suffix === '/entries' && request.method === 'POST') {
         return this.createEntry(request);
+      }
+
+      const entryUpdate = suffix.match(/^\/entries\/([^/]+)$/);
+      if (entryUpdate && request.method === 'PATCH') {
+        return this.updateEntry(request, decodeURIComponent(entryUpdate[1]));
       }
 
       const entryDelete = suffix.match(/^\/entries\/([^/]+)$/);
