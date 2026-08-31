@@ -5,6 +5,8 @@ on:
     branches:
       - main
   workflow_dispatch:
+  issues:
+    types: [opened]
 
 permissions:
   contents: read
@@ -15,6 +17,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name != 'issues' || github.event.issue.title == 'Run NMRNL Cloudflare'
     name: Build and deploy NMRNL
     runs-on: ubuntu-latest
     timeout-minutes: 15
