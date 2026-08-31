@@ -10,6 +10,7 @@ import QRCode from 'qrcode';
 import {
   beginAccessRecovery,
   beginAuthenticatorEnrollment,
+  cancelActiveVisit,
   clearCredentials,
   confirmAuthenticatorEnrollment,
   confirmWorkspaceTotp,
@@ -19,6 +20,7 @@ import {
   deleteEntry,
   fetchAccountWorkspace,
   fetchWorkspace,
+  finishActiveVisit,
   loadCredentials,
   loadKnownWorkspaceId,
   loginWithTotp,
@@ -29,6 +31,7 @@ import {
   confirmRecoveryAuthenticator,
   setEntryCalendarEntered,
   setGeneralActionCompleted,
+  startActiveVisit,
   updateDriveSetup,
   updateDriveSupportNoteMeta,
   updateInvoiceDriveMeta,
@@ -37,6 +40,7 @@ import {
   setVisitActionCompleted,
   updateEntry,
   updateSupportNote,
+  updateActiveVisit,
 } from './api';
 import {
   ENTRY_TYPES,
@@ -51,6 +55,7 @@ import {
   formatHours,
   localDateValue,
   localTimeValue,
+  type ActiveVisit,
   type EmailRecoveryChallenge,
   type EntryDraft,
   type EntryTypeKey,
@@ -712,6 +717,19 @@ function HomeScreen({
         </button>
       </section>
 
+      {state.activeVisit && (
+        <button className="active-visit-home" onClick={() => go('quick')}>
+          <span className="active-visit-pulse" />
+          <span>
+            <strong>Visit running · {state.activeVisit.client}</strong>
+            <small>
+              {entryType(state.activeVisit.type).label} · started {state.activeVisit.startTime}
+            </small>
+          </span>
+          <b>Open →</b>
+        </button>
+      )}
+
       <div className="stat-grid">
         <StatCard label="Entries" value={String(entries.length)} detail={lastSevenDays + ' in last 7 days'} />
         <StatCard label="Hours" value={formatHours(minutes)} detail="recorded time" />
@@ -824,6 +842,311 @@ function EntryRow({ entry }: { entry: WorkEntry }) {
   );
 }
 
+function visitLines(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function elapsedVisitMinutes(startedAt: string, end = Date.now()): number {
+  const start = Date.parse(startedAt);
+  if (!Number.isFinite(start)) return 0;
+  const seconds = Math.max(0, Math.floor((end - start) / 1000));
+  if (seconds <= 0) return 0;
+  return Math.max(1, Math.min(1440, Math.ceil(seconds / 60)));
+}
+
+function elapsedVisitText(startedAt: string, end = Date.now()): string {
+  const minutes = elapsedVisitMinutes(startedAt, end);
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return hours > 0 ? hours + 'h ' + remainder + 'm' : minutes + 'm';
+}
+
+function supportNoteFromVisitNotes(notes: string[]): string {
+  return [
+    'Attendance',
+    '',
+    'What happened',
+    notes.join('\n'),
+    '',
+    'Work/task completed',
+    '',
+    'Support given',
+    '',
+    'Issue/problem',
+    '',
+    'Outcome',
+    '',
+    'Next step',
+    '',
+    'Anything to follow up',
+    '',
+    'Referrals',
+  ].join('\n').trim();
+}
+
+function textNoteBreakdown(
+  direction: TextContactDirection,
+  summary: string,
+  nextActions: string,
+  replyNeeded: boolean,
+): string {
+  return [
+    'Contact direction',
+    direction,
+    '',
+    'Contact summary',
+    summary.trim(),
+    '',
+    'Reply needed',
+    replyNeeded ? 'Reply or follow-up needed' : 'No full reply needed',
+    '',
+    'Next action(s)',
+    nextActions.trim(),
+  ].join('\n').trim();
+}
+
+function FinishActiveVisitModal({
+  activeVisit,
+  notesText,
+  finishOdometer,
+  credentials,
+  onState,
+  onSaved,
+  onClose,
+}: {
+  activeVisit: ActiveVisit;
+  notesText: string;
+  finishOdometer: string;
+  credentials: WorkspaceCredentials;
+  onState: (state: WorkspaceState) => void;
+  onSaved: (entry: WorkEntry) => void;
+  onClose: () => void;
+}) {
+  const isText = activeVisit.type === 'textNote';
+  const [supportNote, setSupportNote] = useState(
+    activeVisit.supportNoteDraft.trim() ||
+      supportNoteFromVisitNotes(visitLines(notesText)),
+  );
+  const [summary, setSummary] = useState(
+    activeVisit.textSummaryDraft.trim() || visitLines(notesText).join('\n'),
+  );
+  const [nextActions, setNextActions] = useState(
+    activeVisit.textNextActionsDraft,
+  );
+  const [direction, setDirection] = useState<TextContactDirection>(
+    activeVisit.textContactDirectionDraft || 'received',
+  );
+  const [replyNeeded, setReplyNeeded] = useState(
+    activeVisit.textReplyNeededDraft,
+  );
+  const [importantText, setImportantText] = useState(
+    activeVisit.textImportantDraft,
+  );
+  const [saving, setSaving] = useState('');
+  const [error, setError] = useState('');
+
+  const saveDraft = async () => {
+    setSaving('draft');
+    setError('');
+    try {
+      const next = await updateActiveVisit(
+        credentials,
+        isText
+          ? {
+              notes: visitLines(notesText),
+              textSummaryDraft: summary,
+              textNextActionsDraft: nextActions,
+              textContactDirectionDraft: direction,
+              textReplyNeededDraft: replyNeeded,
+              textImportantDraft: importantText,
+            }
+          : {
+              notes: visitLines(notesText),
+              supportNoteDraft: supportNote,
+            },
+      );
+      onState(next);
+      onClose();
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Could not save the visit close-out draft.',
+      );
+    } finally {
+      setSaving('');
+    }
+  };
+
+  const finish = async () => {
+    const odometerEnd =
+      activeVisit.type === 'homeVisit' && finishOdometer.trim()
+        ? Number(finishOdometer)
+        : null;
+
+    if (
+      odometerEnd != null &&
+      (!Number.isFinite(odometerEnd) ||
+        (activeVisit.odometerStart != null &&
+          odometerEnd < activeVisit.odometerStart))
+    ) {
+      setError('Finish odometer must be a valid reading higher than the start.');
+      return;
+    }
+
+    const breakdown = isText
+      ? textNoteBreakdown(direction, summary, nextActions, replyNeeded)
+      : supportNote.trim();
+
+    setSaving('finish');
+    setError('');
+    try {
+      const result = await finishActiveVisit(credentials, {
+        finishedAt: new Date().toISOString(),
+        odometerEnd,
+        notes: visitLines(notesText),
+        supportNoteBreakdown: breakdown,
+        importantText: isText ? importantText : false,
+        textContactDirection: isText ? direction : 'received',
+        textReplyNeeded: isText ? replyNeeded : false,
+      });
+      onState(result.state);
+      onSaved(result.entry);
+      onClose();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : 'Could not finish the visit.',
+      );
+    } finally {
+      setSaving('');
+    }
+  };
+
+  return (
+    <div className="modal-backdrop visit-closeout-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="visit-closeout-modal"
+        aria-label="Finish active visit"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="support-note-header">
+          <div>
+            <div className="eyebrow">FINISH VISIT</div>
+            <h2>{activeVisit.client}</h2>
+            <p>
+              {entryType(activeVisit.type).label} · {elapsedVisitText(activeVisit.startedAt)}
+            </p>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose}>×</button>
+        </div>
+
+        {error && <div className="error-banner">{error}</div>}
+
+        {isText ? (
+          <>
+            <label className="field">
+              <span>Contact summary</span>
+              <textarea
+                rows={7}
+                value={summary}
+                onChange={(event) => setSummary(event.target.value)}
+                placeholder="What was discussed or exchanged?"
+              />
+            </label>
+            <label className="field">
+              <span>Next action(s)</span>
+              <textarea
+                rows={4}
+                value={nextActions}
+                onChange={(event) => setNextActions(event.target.value)}
+                placeholder="One action per line"
+              />
+            </label>
+            <div className="form-grid two">
+              <label className="field">
+                <span>Direction</span>
+                <select
+                  value={direction}
+                  onChange={(event) =>
+                    setDirection(event.target.value as TextContactDirection)
+                  }
+                >
+                  <option value="received">Received</option>
+                  <option value="sent">Sent</option>
+                  <option value="exchange">Exchange</option>
+                </select>
+              </label>
+              <label className="check-card">
+                <input
+                  type="checkbox"
+                  checked={replyNeeded}
+                  onChange={(event) => setReplyNeeded(event.target.checked)}
+                />
+                <span><strong>Reply needed</strong><small>Keep this in Admin Review.</small></span>
+              </label>
+            </div>
+            <label className="check-card visit-important">
+              <input
+                type="checkbox"
+                checked={importantText}
+                onChange={(event) => setImportantText(event.target.checked)}
+              />
+              <span><strong>Mark important</strong><small>Flag significant written contact.</small></span>
+            </label>
+          </>
+        ) : (
+          <label className="field">
+            <span>Support note breakdown</span>
+            <textarea
+              className="visit-closeout-note"
+              rows={18}
+              value={supportNote}
+              onChange={(event) => setSupportNote(event.target.value)}
+            />
+          </label>
+        )}
+
+        <div className="visit-closeout-summary">
+          <div><span>Started</span><strong>{formatDate(activeVisit.date)} · {activeVisit.startTime}</strong></div>
+          <div><span>Duration</span><strong>{elapsedVisitText(activeVisit.startedAt)}</strong></div>
+          {activeVisit.type === 'homeVisit' && (
+            <div>
+              <span>Odometer</span>
+              <strong>
+                {activeVisit.odometerStart == null ? 'Not set' : activeVisit.odometerStart.toFixed(1)}
+                {' → '}
+                {finishOdometer.trim() || '—'}
+              </strong>
+            </div>
+          )}
+        </div>
+
+        <div className="visit-closeout-actions">
+          <button
+            type="button"
+            className="secondary"
+            disabled={Boolean(saving)}
+            onClick={() => void saveDraft()}
+          >
+            {saving === 'draft' ? 'Saving…' : 'Save Draft & Return'}
+          </button>
+          <button
+            type="button"
+            className="primary"
+            disabled={Boolean(saving)}
+            onClick={() => void finish()}
+          >
+            {saving === 'finish' ? 'Finishing…' : 'Finish Visit & Save'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function QuickEntryScreen({
   mode,
   state,
@@ -838,6 +1161,7 @@ function QuickEntryScreen({
   go: (section: Section) => void;
 }) {
   const allowedTypes = entryTypesForMode(mode);
+  const [captureMode, setCaptureMode] = useState<'timed' | 'manual'>('timed');
   const [type, setType] = useState<EntryTypeKey>(allowedTypes[0].key);
   const [client, setClient] = useState('');
   const [date, setDate] = useState(localDateValue());
@@ -851,14 +1175,44 @@ function QuickEntryScreen({
   const [replyNeeded, setReplyNeeded] = useState(false);
   const [odometerStart, setOdometerStart] = useState('');
   const [odometerEnd, setOdometerEnd] = useState('');
+  const [visitContext, setVisitContext] = useState('');
+  const [activeNotes, setActiveNotes] = useState('');
+  const [activeStartOdometer, setActiveStartOdometer] = useState('');
+  const [activeFinishOdometer, setActiveFinishOdometer] = useState('');
+  const [finishOpen, setFinishOpen] = useState(false);
+  const [recentlySaved, setRecentlySaved] = useState<WorkEntry | null>(null);
+  const [tick, setTick] = useState(Date.now());
   const [saving, setSaving] = useState(false);
+  const [activeBusy, setActiveBusy] = useState('');
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+
+  const activeVisit = state.activeVisit;
 
   useEffect(() => {
     if (!allowedTypes.some((item) => item.key === type)) {
       setType(allowedTypes[0].key);
     }
   }, [mode, type, allowedTypes]);
+
+  useEffect(() => {
+    if (!activeVisit) return;
+    setActiveNotes(activeVisit.notes.join('\n'));
+    setActiveStartOdometer(
+      activeVisit.odometerStart == null
+        ? ''
+        : String(activeVisit.odometerStart),
+    );
+    setActiveFinishOdometer('');
+    setRecentlySaved(null);
+  }, [activeVisit?.id]);
+
+  useEffect(() => {
+    if (!activeVisit) return;
+    setTick(Date.now());
+    const timer = window.setInterval(() => setTick(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, [activeVisit?.id]);
 
   const definition = entryType(type);
   const clientNames = useMemo(
@@ -870,7 +1224,129 @@ function QuickEntryScreen({
     [state.clients, mode],
   );
 
-  const save = async (event: FormEvent) => {
+  const fallbackClient = () =>
+    type === 'emailProfessional'
+      ? 'Professional email'
+      : type === 'adminEducationResources'
+        ? 'Admin / Education / Resources'
+        : 'Unknown Client';
+
+  const startTimed = async () => {
+    setError('');
+    setMessage('');
+
+    if (definition.requiresClient && !client.trim()) {
+      setError('Choose or enter a client before starting.');
+      return;
+    }
+
+    const selectedClient = client.trim() || fallbackClient();
+    const now = new Date();
+    const localStartTime = localTimeValue(now);
+    const localStart = new Date(date + 'T' + localStartTime + ':00');
+
+    if (Number.isNaN(localStart.getTime())) {
+      setError('Choose a valid visit date.');
+      return;
+    }
+
+    const startOdo =
+      type === 'homeVisit' && odometerStart.trim()
+        ? Number(odometerStart)
+        : null;
+    if (startOdo != null && !Number.isFinite(startOdo)) {
+      setError('Starting odometer must be a valid number.');
+      return;
+    }
+
+    setActiveBusy('start');
+    try {
+      const next = await startActiveVisit(credentials, {
+        client: selectedClient,
+        type,
+        startedAt: localStart.toISOString(),
+        date,
+        startTime: localStartTime,
+        odometerStart: startOdo,
+        notes: visitLines(visitContext),
+      });
+      onState(next);
+      setVisitContext('');
+      setOdometerStart('');
+      setMessage('Visit started and saved to your Work workspace.');
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : 'Could not start the visit.',
+      );
+    } finally {
+      setActiveBusy('');
+    }
+  };
+
+  const saveActiveDraft = async () => {
+    if (!activeVisit) return;
+
+    const startOdo =
+      activeVisit.type === 'homeVisit' && activeStartOdometer.trim()
+        ? Number(activeStartOdometer)
+        : activeVisit.odometerStart;
+
+    if (startOdo != null && !Number.isFinite(startOdo)) {
+      setError('Starting odometer must be a valid number.');
+      return;
+    }
+
+    setActiveBusy('draft');
+    setError('');
+    setMessage('');
+    try {
+      const next = await updateActiveVisit(credentials, {
+        notes: visitLines(activeNotes),
+        odometerStart: startOdo,
+      });
+      onState(next);
+      setMessage('Active visit draft saved.');
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Could not save the active visit draft.',
+      );
+    } finally {
+      setActiveBusy('');
+    }
+  };
+
+  const cancelVisit = async () => {
+    if (!activeVisit) return;
+    if (
+      !window.confirm(
+        'Cancel the active visit for ' +
+          activeVisit.client +
+          '? No Work entry will be created.',
+      )
+    ) {
+      return;
+    }
+
+    setActiveBusy('cancel');
+    setError('');
+    try {
+      onState(await cancelActiveVisit(credentials));
+      setMessage('Active visit cancelled.');
+      setActiveNotes('');
+      setActiveStartOdometer('');
+      setActiveFinishOdometer('');
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : 'Could not cancel the visit.',
+      );
+    } finally {
+      setActiveBusy('');
+    }
+  };
+
+  const saveManual = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
 
@@ -879,24 +1355,14 @@ function QuickEntryScreen({
       return;
     }
 
-    const fallbackClient =
-      type === 'emailProfessional'
-        ? 'Professional email'
-        : type === 'adminEducationResources'
-          ? 'Admin / Education / Resources'
-          : 'Unknown Client';
-
     const draft: EntryDraft = {
       mode,
-      client: client.trim() || fallbackClient,
+      client: client.trim() || fallbackClient(),
       type,
       date,
       startTime,
       minutes,
-      notes: notes
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean),
+      notes: visitLines(notes),
       supportNoteBreakdown: supportNote.trim(),
       nextAction: nextAction.trim(),
       importantText,
@@ -929,13 +1395,313 @@ function QuickEntryScreen({
     }
   };
 
+  if (recentlySaved && !activeVisit) {
+    return (
+      <div className="page-stack">
+        <section className="visit-saved-hero">
+          <div className="visit-saved-check">✓</div>
+          <div>
+            <div className="eyebrow">WORK SAVED</div>
+            <h2>Visit saved</h2>
+            <p>
+              {recentlySaved.client} · {entryType(recentlySaved.type).label} · {recentlySaved.minutes} min
+            </p>
+          </div>
+        </section>
+
+        <Panel title="Saved summary">
+          <div className="visit-summary-grid">
+            <div><span>Client</span><strong>{recentlySaved.client}</strong></div>
+            <div><span>Date</span><strong>{formatDate(recentlySaved.date)}</strong></div>
+            <div><span>Minutes</span><strong>{recentlySaved.minutes} min</strong></div>
+            <div><span>Billable</span><strong>{entryBillableHours(recentlySaved).toFixed(2)} h</strong></div>
+            <div><span>KM</span><strong>{entryKilometres(recentlySaved).toFixed(1)}</strong></div>
+            <div><span>Earned</span><strong>{money(entryEarnings(recentlySaved, state.settings.hourlyRate))}</strong></div>
+          </div>
+        </Panel>
+
+        <div className="visit-saved-actions">
+          <button
+            className="secondary"
+            onClick={async () => {
+              const popup = window.open(
+                googleCalendarDraftUrl(recentlySaved),
+                '_blank',
+                'noopener,noreferrer',
+              );
+              if (!popup) {
+                setError('Calendar was blocked. Allow pop-ups for NMRNL and try again.');
+                return;
+              }
+              onState(
+                await setEntryCalendarEntered(
+                  credentials,
+                  recentlySaved.id,
+                  true,
+                ),
+              );
+            }}
+          >
+            ▦ Create Calendar Event
+          </button>
+          <button className="secondary" onClick={() => go('entries')}>Open Entries</button>
+          <button
+            className="primary"
+            onClick={() => {
+              setRecentlySaved(null);
+              setCaptureMode('timed');
+              setDate(localDateValue());
+            }}
+          >
+            + Start New Visit
+          </button>
+        </div>
+
+        {error && <div className="error-banner">{error}</div>}
+      </div>
+    );
+  }
+
+  if (activeVisit) {
+    const elapsedMinutes = elapsedVisitMinutes(activeVisit.startedAt, tick);
+    const estimated = (elapsedMinutes / 60) * state.settings.hourlyRate;
+
+    return (
+      <div className="page-stack active-visit-page">
+        <section className="active-visit-hero">
+          <span className="active-visit-live"><i /> LIVE VISIT</span>
+          <strong className="active-visit-time">
+            {elapsedVisitText(activeVisit.startedAt, tick)}
+          </strong>
+          <h2>{activeVisit.client}</h2>
+          <p>
+            {entryType(activeVisit.type).label} · started {formatDate(activeVisit.date)} at {activeVisit.startTime}
+          </p>
+          <div className="active-visit-hero-stats">
+            <span><small>Elapsed</small><b>{elapsedMinutes} min</b></span>
+            <span><small>Estimated</small><b>{money(estimated)}</b></span>
+            <span><small>Draft</small><b>Cloud saved</b></span>
+          </div>
+        </section>
+
+        {error && <div className="error-banner">{error}</div>}
+        {message && <div className="success-banner">{message}</div>}
+
+        {activeVisit.type === 'homeVisit' && (
+          <Panel title="Travel" subtitle="You can add the starting odometer after the timer has begun">
+            <div className="form-grid two">
+              <label className="field">
+                <span>Starting odometer</span>
+                <input
+                  inputMode="decimal"
+                  value={activeStartOdometer}
+                  onChange={(event) => setActiveStartOdometer(event.target.value)}
+                  placeholder="Optional"
+                />
+              </label>
+              <label className="field">
+                <span>Finishing odometer</span>
+                <input
+                  inputMode="decimal"
+                  value={activeFinishOdometer}
+                  onChange={(event) => setActiveFinishOdometer(event.target.value)}
+                  placeholder="Add when visit finishes"
+                />
+              </label>
+            </div>
+          </Panel>
+        )}
+
+        <Panel title="Visit Context" subtitle="Keep notes while the visit is running">
+          <label className="field">
+            <span>Draft notes</span>
+            <textarea
+              rows={9}
+              value={activeNotes}
+              onChange={(event) => setActiveNotes(event.target.value)}
+              placeholder="Add topics, observations, agencies or brief factual notes — one per line."
+            />
+          </label>
+          <div className="active-draft-row">
+            <button
+              type="button"
+              className="secondary"
+              disabled={Boolean(activeBusy)}
+              onClick={() => void saveActiveDraft()}
+            >
+              {activeBusy === 'draft' ? 'Saving…' : 'Save Draft Notes'}
+            </button>
+            <small>The running visit itself is already stored in the cloud.</small>
+          </div>
+        </Panel>
+
+        <div className="active-visit-bottom-actions">
+          <button
+            type="button"
+            className="active-cancel"
+            disabled={Boolean(activeBusy)}
+            onClick={() => void cancelVisit()}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="primary big"
+            disabled={Boolean(activeBusy)}
+            onClick={() => setFinishOpen(true)}
+          >
+            ■ Finish Visit & Save
+          </button>
+        </div>
+
+        {finishOpen && (
+          <FinishActiveVisitModal
+            activeVisit={activeVisit}
+            notesText={activeNotes}
+            finishOdometer={activeFinishOdometer}
+            credentials={credentials}
+            onState={onState}
+            onSaved={(entry) => {
+              setRecentlySaved(entry);
+              setActiveNotes('');
+              setActiveStartOdometer('');
+              setActiveFinishOdometer('');
+            }}
+            onClose={() => setFinishOpen(false)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  if (captureMode === 'timed') {
+    return (
+      <div className="page-stack">
+        <section className="page-title">
+          <div>
+            <div className="eyebrow">LIVE WORK CAPTURE</div>
+            <h2>Start visit</h2>
+            <p>Choose who and what. NMRNL times the visit until you finish it.</p>
+          </div>
+        </section>
+
+        {error && <div className="error-banner">{error}</div>}
+        {message && <div className="success-banner">{message}</div>}
+
+        <div className="visit-mode-switch">
+          <button className="active" type="button">Timed Visit</button>
+          <button type="button" onClick={() => setCaptureMode('manual')}>Manual Entry</button>
+        </div>
+
+        <Panel title="1. Client">
+          <label className="field">
+            <span>
+              Client
+              {!definition.requiresClient && (
+                <small>{definition.optionalClient ? ' optional' : ' not required'}</small>
+              )}
+            </span>
+            <input
+              list="nmrnl-timed-clients"
+              value={client}
+              onChange={(event) => setClient(event.target.value)}
+              placeholder={definition.requiresClient ? 'Client name' : 'Optional client tag'}
+            />
+            <datalist id="nmrnl-timed-clients">
+              {clientNames.map((name) => <option value={name} key={name} />)}
+            </datalist>
+          </label>
+        </Panel>
+
+        <Panel title="2. Support Type">
+          <div className="type-grid">
+            {allowedTypes.map((item) => (
+              <button
+                type="button"
+                key={item.key}
+                className={'type-tile ' + (item.key === type ? 'active' : '')}
+                onClick={() => {
+                  setType(item.key);
+                  if (item.key !== 'homeVisit') setOdometerStart('');
+                }}
+              >
+                <span>{item.icon}</span>
+                <strong>{item.shortLabel}</strong>
+              </button>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="3. Visit Date">
+          <div className="visit-date-controls">
+            <label className="field">
+              <span>Selected date</span>
+              <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+            </label>
+            <button type="button" className="secondary compact" onClick={() => setDate(localDateValue())}>Today</button>
+            <button
+              type="button"
+              className="secondary compact"
+              onClick={() => {
+                const selected = new Date(date + 'T12:00:00');
+                selected.setDate(selected.getDate() - 1);
+                setDate(localDateValue(selected));
+              }}
+            >
+              ← Previous Day
+            </button>
+          </div>
+        </Panel>
+
+        {type === 'homeVisit' && (
+          <Panel title="4. Starting Odometer" subtitle="Optional — add it now or after the timer starts">
+            <label className="field">
+              <span>Starting odometer</span>
+              <input
+                inputMode="decimal"
+                value={odometerStart}
+                onChange={(event) => setOdometerStart(event.target.value)}
+                placeholder="e.g. 84520.3"
+              />
+            </label>
+          </Panel>
+        )}
+
+        <Panel title="Optional Visit Context">
+          <label className="field">
+            <span>Topics / context</span>
+            <textarea
+              rows={6}
+              value={visitContext}
+              onChange={(event) => setVisitContext(event.target.value)}
+              placeholder="Optional topics or context — one per line. You can add more while the visit runs."
+            />
+          </label>
+        </Panel>
+
+        <button
+          type="button"
+          className="primary big timed-start-button"
+          disabled={activeBusy === 'start'}
+          onClick={() => void startTimed()}
+        >
+          {activeBusy === 'start'
+            ? 'Starting…'
+            : type === 'homeVisit'
+              ? '▶ Start Visit'
+              : '▶ Start Now'}
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <form className="page-stack" onSubmit={save}>
+    <form className="page-stack" onSubmit={saveManual}>
       <section className="page-title">
         <div>
           <div className="eyebrow">FAST CAPTURE</div>
-          <h2>Quick Entry</h2>
-          <p>Record the contact first. Add only the detail that matters.</p>
+          <h2>Manual Entry</h2>
+          <p>Record completed Work without running a live timer.</p>
         </div>
         <button className="primary" disabled={saving}>
           {saving ? 'Saving…' : 'Save entry'}
@@ -943,6 +1709,11 @@ function QuickEntryScreen({
       </section>
 
       {error && <div className="error-banner">{error}</div>}
+
+      <div className="visit-mode-switch">
+        <button type="button" onClick={() => setCaptureMode('timed')}>Timed Visit</button>
+        <button className="active" type="button">Manual Entry</button>
+      </div>
 
       <Panel title="Entry type" subtitle="Choose what happened">
         <div className="type-grid">
@@ -973,9 +1744,7 @@ function QuickEntryScreen({
               list="nmrnl-clients"
               value={client}
               onChange={(event) => setClient(event.target.value)}
-              placeholder={
-                definition.requiresClient ? 'Client name' : 'Optional client tag'
-              }
+              placeholder={definition.requiresClient ? 'Client name' : 'Optional client tag'}
             />
             <datalist id="nmrnl-clients">
               {clientNames.map((name) => <option value={name} key={name} />)}
@@ -991,13 +1760,7 @@ function QuickEntryScreen({
           </label>
           <label className="field">
             <span>Minutes</span>
-            <input
-              type="number"
-              min="0"
-              max="1440"
-              value={minutes}
-              onChange={(event) => setMinutes(Number(event.target.value))}
-            />
+            <input type="number" min="1" max="1440" value={minutes} onChange={(event) => setMinutes(Number(event.target.value))} />
           </label>
         </div>
       </Panel>
@@ -1007,21 +1770,11 @@ function QuickEntryScreen({
           <div className="form-grid two">
             <label className="field">
               <span>Odometer start</span>
-              <input
-                inputMode="decimal"
-                value={odometerStart}
-                onChange={(event) => setOdometerStart(event.target.value)}
-                placeholder="e.g. 84520.3"
-              />
+              <input inputMode="decimal" value={odometerStart} onChange={(event) => setOdometerStart(event.target.value)} placeholder="e.g. 84520.3" />
             </label>
             <label className="field">
               <span>Odometer end</span>
-              <input
-                inputMode="decimal"
-                value={odometerEnd}
-                onChange={(event) => setOdometerEnd(event.target.value)}
-                placeholder="e.g. 84534.8"
-              />
+              <input inputMode="decimal" value={odometerEnd} onChange={(event) => setOdometerEnd(event.target.value)} placeholder="e.g. 84534.8" />
             </label>
           </div>
         </Panel>
@@ -1032,27 +1785,15 @@ function QuickEntryScreen({
           <div className="form-grid two">
             <label className="field">
               <span>Direction</span>
-              <select
-                value={direction}
-                onChange={(event) =>
-                  setDirection(event.target.value as TextContactDirection)
-                }
-              >
+              <select value={direction} onChange={(event) => setDirection(event.target.value as TextContactDirection)}>
                 <option value="received">Received</option>
                 <option value="sent">Sent</option>
                 <option value="exchange">Exchange</option>
               </select>
             </label>
             <label className="check-card">
-              <input
-                type="checkbox"
-                checked={replyNeeded}
-                onChange={(event) => setReplyNeeded(event.target.checked)}
-              />
-              <span>
-                <strong>Reply needed</strong>
-                <small>Keep this text visible for follow-up.</small>
-              </span>
+              <input type="checkbox" checked={replyNeeded} onChange={(event) => setReplyNeeded(event.target.checked)} />
+              <span><strong>Reply needed</strong><small>Keep this text visible for follow-up.</small></span>
             </label>
           </div>
         </Panel>
@@ -1062,23 +1803,11 @@ function QuickEntryScreen({
         <div className="form-grid two note-grid">
           <label className="field">
             <span>Notes</span>
-            <textarea
-              rows={7}
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-              placeholder="One point per line. Keep it factual and concise."
-            />
+            <textarea rows={7} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="One point per line. Keep it factual and concise." />
           </label>
           <label className="field">
             <span>Support note breakdown</span>
-            <textarea
-              rows={7}
-              value={supportNote}
-              onChange={(event) => setSupportNote(event.target.value)}
-              placeholder={
-                'Attendance\n\nWhat happened\n\nWork/task completed\n\nSupport given\n\nIssue/problem\n\nOutcome\n\nNext step\n\nAnything to follow up\n\nReferrals'
-              }
-            />
+            <textarea rows={7} value={supportNote} onChange={(event) => setSupportNote(event.target.value)} placeholder={SUPPORT_NOTE_TEMPLATE} />
           </label>
         </div>
       </Panel>
@@ -1087,22 +1816,11 @@ function QuickEntryScreen({
         <div className="form-grid two">
           <label className="field">
             <span>Next action</span>
-            <input
-              value={nextAction}
-              onChange={(event) => setNextAction(event.target.value)}
-              placeholder="e.g. Call client Thursday about tenancy referral"
-            />
+            <input value={nextAction} onChange={(event) => setNextAction(event.target.value)} placeholder="e.g. Call client Thursday about tenancy referral" />
           </label>
           <label className="check-card">
-            <input
-              type="checkbox"
-              checked={importantText}
-              onChange={(event) => setImportantText(event.target.checked)}
-            />
-            <span>
-              <strong>Mark important</strong>
-              <small>Useful for significant written contact.</small>
-            </span>
+            <input type="checkbox" checked={importantText} onChange={(event) => setImportantText(event.target.checked)} />
+            <span><strong>Mark important</strong><small>Useful for significant written contact.</small></span>
           </label>
         </div>
       </Panel>
@@ -4226,10 +4944,14 @@ export function App() {
             </button>
           </div>
 
-          <div className="sync-pill">
+          <button
+            type="button"
+            className={'sync-pill ' + (state.activeVisit ? 'visit-running' : '')}
+            onClick={() => state.activeVisit && setSection('quick')}
+          >
             <span />
-            Cloud saved
-          </div>
+            {state.activeVisit ? 'Visit running' : 'Cloud saved'}
+          </button>
         </header>
 
         {error && <div className="global-error">{error}</div>}

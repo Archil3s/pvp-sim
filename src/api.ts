@@ -1,4 +1,5 @@
 import type {
+  ActiveVisit,
   DriveConnectionState,
   DriveSupportNoteMeta,
   EntryDraft,
@@ -300,6 +301,86 @@ export function fetchWorkspace(
     credentials,
     '/snapshot',
   ).then((payload) => payload.state);
+}
+
+export function startActiveVisit(
+  credentials: WorkspaceCredentials,
+  input: {
+    client: string;
+    type: EntryTypeKey;
+    startedAt: string;
+    date: string;
+    startTime: string;
+    odometerStart: number | null;
+    notes: string[];
+  },
+): Promise<WorkspaceState> {
+  return workspaceRequest<{ state: WorkspaceState }>(
+    credentials,
+    '/active-visit',
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  ).then((payload) => payload.state);
+}
+
+export function updateActiveVisit(
+  credentials: WorkspaceCredentials,
+  input: Partial<
+    Pick<
+      ActiveVisit,
+      | 'odometerStart'
+      | 'notes'
+      | 'supportNoteDraft'
+      | 'textSummaryDraft'
+      | 'textNextActionsDraft'
+      | 'textContactDirectionDraft'
+      | 'textReplyNeededDraft'
+      | 'textImportantDraft'
+    >
+  >,
+): Promise<WorkspaceState> {
+  return workspaceRequest<{ state: WorkspaceState }>(
+    credentials,
+    '/active-visit',
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    },
+  ).then((payload) => payload.state);
+}
+
+export function cancelActiveVisit(
+  credentials: WorkspaceCredentials,
+): Promise<WorkspaceState> {
+  return workspaceRequest<{ state: WorkspaceState }>(
+    credentials,
+    '/active-visit',
+    { method: 'DELETE' },
+  ).then((payload) => payload.state);
+}
+
+export function finishActiveVisit(
+  credentials: WorkspaceCredentials,
+  input: {
+    finishedAt: string;
+    odometerEnd: number | null;
+    notes: string[];
+    supportNoteBreakdown: string;
+    importantText: boolean;
+    textContactDirection: TextContactDirection;
+    textReplyNeeded: boolean;
+  },
+): Promise<{ state: WorkspaceState; entry: WorkEntry }> {
+  return workspaceRequest<{ state: WorkspaceState; entry: WorkEntry }>(
+    credentials,
+    '/active-visit/finish',
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 export function createEntry(

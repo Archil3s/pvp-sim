@@ -36,6 +36,10 @@ The pre-NMRNL state of this repository is preserved on:
 - Admin Review queue for replies, calendar gaps, missing notes, open actions and important texts
 - Fortnight analytics with trends, workflow health, billable-time mix and editable weekly hours goal
 - Visual Work charts for daily hours/KM, cumulative earnings, client hours and entry-type mix
+- Persistent Active Visit timer with Start → live draft → Finish & Save workflow
+- Active-visit odometer capture, draft notes and structured support-note/text close-out
+- Active Visit survives refresh/device changes because the running visit is stored in the Durable Object
+- Finished timed visits create normal Work entries, billable time, next actions and Calendar-ready records
 - Mobile + desktop navigation
 
 ## Temporary build access
@@ -112,7 +116,6 @@ After the Worker is renamed to `nmrnl` in the Cloudflare dashboard, update the W
 
 ## Next port slices
 
-- Active visit / start-finish workflow
 - Remaining Work dashboard polish and deeper Drive sync
 
 

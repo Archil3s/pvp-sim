@@ -161,11 +161,115 @@ function modeValue(value) {
   return MODES.has(mode) ? mode : 'work';
 }
 
+function nextActionsFromBreakdown(value, now) {
+  const lines = String(value || '').split(/\r?\n/);
+  const actions = [];
+  let inNextActions = false;
+
+  for (const rawLine of lines) {
+    const trimmed = String(rawLine || '').trim();
+    const normalized = trimmed.toLowerCase();
+
+    if (
+      normalized.startsWith('next action') ||
+      normalized.startsWith('next step')
+    ) {
+      inNextActions = true;
+      continue;
+    }
+
+    if (
+      inNextActions &&
+      (
+        normalized.startsWith('anything to follow up') ||
+        normalized.startsWith('overall impression') ||
+        normalized.startsWith('support given') ||
+        normalized.startsWith('issue/problem') ||
+        normalized.startsWith('main topic') ||
+        normalized.startsWith('what happened') ||
+        normalized.startsWith('work/task completed') ||
+        normalized.startsWith('outcome') ||
+        normalized.startsWith('referrals') ||
+        normalized.startsWith('local referral')
+      )
+    ) {
+      break;
+    }
+
+    if (!inNextActions || !trimmed) continue;
+
+    const text = trimmed
+      .replace(/^\d+[\.)]\s*/, '')
+      .replace(/^[-*]\s*/, '')
+      .trim();
+
+    if (!text) continue;
+
+    actions.push({
+      id: crypto.randomUUID(),
+      text,
+      createdAt: now,
+      completedAt: null,
+    });
+
+    if (actions.length >= 20) break;
+  }
+
+  return actions;
+}
+
+function normaliseActiveVisit(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+
+  const type = stringValue(value.type);
+  const client = stringValue(value.client);
+  const startedAt = stringValue(value.startedAt);
+  const date = stringValue(value.date);
+  const startTime = stringValue(value.startTime);
+  if (
+    !ENTRY_TYPES.has(type) ||
+    !client ||
+    !Number.isFinite(Date.parse(startedAt)) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    !/^\d{2}:\d{2}$/.test(startTime)
+  ) {
+    return null;
+  }
+
+  const direction = TEXT_DIRECTIONS.has(stringValue(value.textContactDirectionDraft))
+    ? stringValue(value.textContactDirectionDraft)
+    : 'received';
+
+  return {
+    id: stringValue(value.id) || crypto.randomUUID(),
+    client,
+    type,
+    startedAt,
+    date,
+    startTime,
+    odometerStart: type === 'homeVisit' ? numberValue(value.odometerStart) : null,
+    notes: Array.isArray(value.notes)
+      ? value.notes.map((item) => stringValue(item)).filter(Boolean).slice(0, 100)
+      : [],
+    supportNoteDraft: stringValue(value.supportNoteDraft),
+    textSummaryDraft: stringValue(value.textSummaryDraft),
+    textNextActionsDraft: stringValue(value.textNextActionsDraft),
+    textContactDirectionDraft: direction,
+    textReplyNeededDraft: value.textReplyNeededDraft === true,
+    textImportantDraft: value.textImportantDraft === true,
+    updatedAt:
+      Number.isFinite(Date.parse(stringValue(value.updatedAt)))
+        ? stringValue(value.updatedAt)
+        : new Date().toISOString(),
+  };
+}
+
 function cloneDefaultData() {
   return {
-    version: 2,
+    version: 3,
     clients: [],
     entries: [],
+    activeVisit: null,
     actions: [],
     settings: { ...DEFAULT_WORK_SETTINGS },
     invoiceStatuses: {},
@@ -204,9 +308,10 @@ function normaliseData(value) {
       : {};
 
   return {
-    version: 2,
+    version: 3,
     clients: Array.isArray(value.clients) ? value.clients : [],
     entries: Array.isArray(value.entries) ? value.entries : [],
+    activeVisit: normaliseActiveVisit(value.activeVisit),
     actions: Array.isArray(value.actions) ? value.actions : [],
     settings: {
       hourlyRate:
@@ -421,6 +526,7 @@ export class SupervisorHub {
       recoveryEmailEnabled: true,
       clients: resolvedData.clients,
       entries: resolvedData.entries,
+      activeVisit: resolvedData.activeVisit,
       actions: resolvedData.actions,
       settings: resolvedData.settings,
       invoiceStatuses: resolvedData.invoiceStatuses,
@@ -731,6 +837,228 @@ export class SupervisorHub {
       sessionToken,
       state: await this.snapshot(meta),
     });
+  }
+
+  async startActiveVisit(request) {
+    const body = await readObject(request);
+    const data = await this.getData();
+
+    if (data.activeVisit) {
+      return json(
+        { error: 'A Work visit is already running. Finish or cancel it first.' },
+        { status: 409 },
+      );
+    }
+
+    const type = stringValue(body.type);
+    const requestedClient = stringValue(body.client);
+    const startedAt = stringValue(body.startedAt);
+    const date = stringValue(body.date);
+    const startTime = stringValue(body.startTime);
+
+    if (!ENTRY_TYPES.has(type)) {
+      return json({ error: 'Unknown entry type.' }, { status: 400 });
+    }
+    if (!Number.isFinite(Date.parse(startedAt))) {
+      return json({ error: 'A valid visit start time is required.' }, { status: 400 });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return json({ error: 'A valid visit date is required.' }, { status: 400 });
+    }
+    if (!/^\d{2}:\d{2}$/.test(startTime)) {
+      return json({ error: 'A valid visit start time is required.' }, { status: 400 });
+    }
+
+    let client = requestedClient;
+    if (!client) {
+      if (type === 'emailProfessional') client = 'Professional email';
+      else if (type === 'adminEducationResources') {
+        client = 'Admin / Education / Resources';
+      } else {
+        return json({ error: 'Client is required for this visit type.' }, { status: 400 });
+      }
+    }
+
+    const now = new Date().toISOString();
+    data.activeVisit = {
+      id: crypto.randomUUID(),
+      client,
+      type,
+      startedAt,
+      date,
+      startTime,
+      odometerStart: type === 'homeVisit' ? numberValue(body.odometerStart) : null,
+      notes: Array.isArray(body.notes)
+        ? body.notes.map((item) => stringValue(item)).filter(Boolean).slice(0, 100)
+        : [],
+      supportNoteDraft: '',
+      textSummaryDraft: '',
+      textNextActionsDraft: '',
+      textContactDirectionDraft: 'received',
+      textReplyNeededDraft: false,
+      textImportantDraft: false,
+      updatedAt: now,
+    };
+
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data) }, { status: 201 });
+  }
+
+  async updateActiveVisit(request) {
+    const body = await readObject(request);
+    const data = await this.getData();
+    const activeVisit = data.activeVisit;
+
+    if (!activeVisit) {
+      return json({ error: 'There is no active Work visit.' }, { status: 404 });
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, 'odometerStart')) {
+      activeVisit.odometerStart =
+        activeVisit.type === 'homeVisit' ? numberValue(body.odometerStart) : null;
+    }
+    if (Array.isArray(body.notes)) {
+      activeVisit.notes = body.notes
+        .map((item) => stringValue(item))
+        .filter(Boolean)
+        .slice(0, 100);
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'supportNoteDraft')) {
+      activeVisit.supportNoteDraft = stringValue(body.supportNoteDraft);
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'textSummaryDraft')) {
+      activeVisit.textSummaryDraft = stringValue(body.textSummaryDraft);
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'textNextActionsDraft')) {
+      activeVisit.textNextActionsDraft = stringValue(body.textNextActionsDraft);
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(body, 'textContactDirectionDraft') &&
+      TEXT_DIRECTIONS.has(stringValue(body.textContactDirectionDraft))
+    ) {
+      activeVisit.textContactDirectionDraft = stringValue(
+        body.textContactDirectionDraft,
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'textReplyNeededDraft')) {
+      activeVisit.textReplyNeededDraft = body.textReplyNeededDraft === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'textImportantDraft')) {
+      activeVisit.textImportantDraft = body.textImportantDraft === true;
+    }
+
+    activeVisit.updatedAt = new Date().toISOString();
+    data.activeVisit = activeVisit;
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data) });
+  }
+
+  async cancelActiveVisit() {
+    const data = await this.getData();
+    data.activeVisit = null;
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data) });
+  }
+
+  async finishActiveVisit(request) {
+    const body = await readObject(request);
+    const data = await this.getData();
+    const activeVisit = data.activeVisit;
+
+    if (!activeVisit) {
+      return json({ error: 'There is no active Work visit.' }, { status: 404 });
+    }
+
+    const start = new Date(activeVisit.startedAt);
+    let finish = new Date(stringValue(body.finishedAt) || new Date().toISOString());
+    if (!Number.isFinite(finish.getTime())) finish = new Date();
+    if (!finish.getTime() || !Number.isFinite(start.getTime())) {
+      return json({ error: 'Visit timing is invalid.' }, { status: 400 });
+    }
+    if (finish <= start) {
+      finish = new Date(finish.getTime() + 86_400_000);
+    }
+
+    const seconds = Math.max(1, Math.floor((finish.getTime() - start.getTime()) / 1000));
+    const minutes = Math.max(1, Math.min(1440, Math.ceil(seconds / 60)));
+    const odometerEnd =
+      activeVisit.type === 'homeVisit' ? numberValue(body.odometerEnd) : null;
+
+    if (
+      activeVisit.type === 'homeVisit' &&
+      activeVisit.odometerStart != null &&
+      odometerEnd != null &&
+      odometerEnd < activeVisit.odometerStart
+    ) {
+      return json(
+        { error: 'Finish odometer must be higher than start odometer.' },
+        { status: 400 },
+      );
+    }
+
+    const now = new Date().toISOString();
+    let clientRecord = data.clients.find(
+      (item) =>
+        item.mode === 'work' &&
+        String(item.name || '').toLowerCase() === activeVisit.client.toLowerCase(),
+    );
+
+    if (!clientRecord) {
+      clientRecord = {
+        id: crypto.randomUUID(),
+        name: activeVisit.client,
+        mode: 'work',
+        createdAt: now,
+      };
+      data.clients.push(clientRecord);
+    }
+
+    const supportNoteBreakdown = stringValue(body.supportNoteBreakdown);
+    const direction = TEXT_DIRECTIONS.has(stringValue(body.textContactDirection))
+      ? stringValue(body.textContactDirection)
+      : 'received';
+    const notes = Array.isArray(body.notes)
+      ? body.notes.map((item) => stringValue(item)).filter(Boolean).slice(0, 100)
+      : activeVisit.notes;
+    const nextActions = nextActionsFromBreakdown(supportNoteBreakdown, now);
+
+    const date = activeVisit.date;
+    const startTime = activeVisit.startTime;
+
+    const entry = {
+      id: crypto.randomUUID(),
+      mode: 'work',
+      clientId: clientRecord.id,
+      client: activeVisit.client,
+      type: activeVisit.type,
+      date,
+      startTime,
+      minutes,
+      notes,
+      supportNoteBreakdown,
+      supportNoteStatus: supportNoteBreakdown ? 'inProgress' : 'incomplete',
+      supportNotePersonName: activeVisit.client,
+      supportNoteUpdatedAt: supportNoteBreakdown ? now : null,
+      nextActions,
+      googleCalendarEntered: false,
+      importantText: body.importantText === true,
+      textContactDirection: direction,
+      textReplyNeeded: body.textReplyNeeded === true,
+      odometerStart:
+        activeVisit.type === 'homeVisit' ? activeVisit.odometerStart : null,
+      odometerEnd,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    data.entries.push(entry);
+    data.activeVisit = null;
+    await this.putData(data);
+
+    return json(
+      { state: await this.snapshot(null, data), entry },
+      { status: 201 },
+    );
   }
 
   async createEntry(request) {
@@ -1298,6 +1626,19 @@ export class SupervisorHub {
 
       if (suffix === '/snapshot' && request.method === 'GET') {
         return json({ state: await this.snapshot() });
+      }
+
+      if (suffix === '/active-visit' && request.method === 'POST') {
+        return this.startActiveVisit(request);
+      }
+      if (suffix === '/active-visit' && request.method === 'PATCH') {
+        return this.updateActiveVisit(request);
+      }
+      if (suffix === '/active-visit' && request.method === 'DELETE') {
+        return this.cancelActiveVisit();
+      }
+      if (suffix === '/active-visit/finish' && request.method === 'POST') {
+        return this.finishActiveVisit(request);
       }
 
       if (suffix === '/entries' && request.method === 'POST') {

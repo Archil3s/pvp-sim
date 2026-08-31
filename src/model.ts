@@ -144,6 +144,24 @@ export const ENTRY_TYPES: EntryTypeDefinition[] = [
   },
 ];
 
+export interface ActiveVisit {
+  id: string;
+  client: string;
+  type: EntryTypeKey;
+  startedAt: string;
+  date: string;
+  startTime: string;
+  odometerStart: number | null;
+  notes: string[];
+  supportNoteDraft: string;
+  textSummaryDraft: string;
+  textNextActionsDraft: string;
+  textContactDirectionDraft: TextContactDirection;
+  textReplyNeededDraft: boolean;
+  textImportantDraft: boolean;
+  updatedAt: string;
+}
+
 export interface Client {
   id: string;
   name: string;
@@ -202,6 +220,7 @@ export interface WorkspaceState {
   recoveryEmailEnabled: boolean;
   clients: Client[];
   entries: WorkEntry[];
+  activeVisit: ActiveVisit | null;
   actions: GeneralAction[];
   settings: WorkSettings;
   invoiceStatuses: Record<string, InvoiceStatus>;
