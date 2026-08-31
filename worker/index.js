@@ -809,6 +809,17 @@ export class SupervisorHub {
       data.clients.push(clientRecord);
     }
 
+    const previousCalendarDetails = {
+      client: entry.client,
+      type: entry.type,
+      date: entry.date,
+      startTime: entry.startTime,
+      minutes: entry.minutes,
+      odometerStart: entry.odometerStart,
+      odometerEnd: entry.odometerEnd,
+      importantText: entry.importantText,
+    };
+
     entry.mode = mode;
     entry.clientId = clientRecord.id;
     entry.client = client;
@@ -831,6 +842,37 @@ export class SupervisorHub {
       type === 'homeVisit' ? numberValue(body.odometerStart) : null;
     entry.odometerEnd =
       type === 'homeVisit' ? numberValue(body.odometerEnd) : null;
+
+    const calendarDetailsChanged =
+      previousCalendarDetails.client !== entry.client ||
+      previousCalendarDetails.type !== entry.type ||
+      previousCalendarDetails.date !== entry.date ||
+      previousCalendarDetails.startTime !== entry.startTime ||
+      previousCalendarDetails.minutes !== entry.minutes ||
+      previousCalendarDetails.odometerStart !== entry.odometerStart ||
+      previousCalendarDetails.odometerEnd !== entry.odometerEnd ||
+      previousCalendarDetails.importantText !== entry.importantText;
+
+    if (calendarDetailsChanged) {
+      entry.googleCalendarEntered = false;
+    }
+
+    entry.updatedAt = new Date().toISOString();
+
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data), entry });
+  }
+
+  async setEntryCalendarEntered(request, entryId) {
+    const body = await readObject(request);
+    const data = await this.getData();
+    const entry = data.entries.find((item) => item.id === entryId);
+
+    if (!entry) {
+      return json({ error: 'Entry not found.' }, { status: 404 });
+    }
+
+    entry.googleCalendarEntered = body.entered === true;
     entry.updatedAt = new Date().toISOString();
 
     await this.putData(data);
@@ -1027,6 +1069,16 @@ export class SupervisorHub {
         return this.updateSupportNote(
           request,
           decodeURIComponent(supportNoteUpdate[1]),
+        );
+      }
+
+      const calendarUpdate = suffix.match(
+        /^\/entries\/([^/]+)\/calendar$/,
+      );
+      if (calendarUpdate && request.method === 'PATCH') {
+        return this.setEntryCalendarEntered(
+          request,
+          decodeURIComponent(calendarUpdate[1]),
         );
       }
 

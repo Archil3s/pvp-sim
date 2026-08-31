@@ -24,6 +24,7 @@ The pre-NMRNL state of this repository is preserved on:
 - Work entry editing
 - Full Work support-note editor with structured template and Incomplete / In Progress / Finished / Submitted status
 - Work calendar with overlap / missing-note / follow-up flags
+- Google Calendar draft export with per-entry calendar status and automatic reset when event details change
 - Work pay-period fortnight totals and daily breakdown
 - Mobile + desktop navigation
 
@@ -101,7 +102,6 @@ After the Worker is renamed to `nmrnl` in the Cloudflare dashboard, update the W
 
 ## Next port slices
 
-- Google Calendar integration
 - Pay-period earnings / invoice workflow
 - Google Drive / Calendar
 - Admin review and charts

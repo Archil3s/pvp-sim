@@ -26,6 +26,7 @@ import {
   rememberWorkspaceId,
   saveCredentials,
   confirmRecoveryAuthenticator,
+  setEntryCalendarEntered,
   setGeneralActionCompleted,
   setVisitActionCompleted,
   updateEntry,
@@ -1514,12 +1515,80 @@ function SupportNoteModal({
   );
 }
 
-function CalendarScreen({ state }: { state: WorkspaceState }) {
+function calendarTitle(entry: WorkEntry): string {
+  if (entry.importantText && entry.type === 'textNote') {
+    return 'IMPORTANT TEXT ' + entry.client;
+  }
+  return entry.client + ' ' + entryType(entry.type).label;
+}
+
+function calendarDetails(entry: WorkEntry): string {
+  const start = entryDateTime(entry);
+  const end = new Date(start.getTime() + Math.max(1, entry.minutes) * 60_000);
+  const lines = [
+    entry.client +
+      ' ' +
+      entryType(entry.type).label +
+      ' on ' +
+      formatDate(entry.date) +
+      ' from ' +
+      entry.startTime +
+      ' to ' +
+      end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
+      ' for ' +
+      entry.minutes +
+      ' minutes.',
+    '',
+    'Visit duration: ' + entry.minutes + ' minutes',
+  ];
+
+  const kilometres = entryKilometres(entry);
+  if (kilometres > 0) {
+    lines.push('Kilometres travelled: ' + kilometres.toFixed(1) + ' km');
+  }
+
+  return lines.join('\n');
+}
+
+function googleCalendarDraftUrl(entry: WorkEntry): string {
+  const start = entryDateTime(entry);
+  const end = new Date(start.getTime() + Math.max(1, entry.minutes) * 60_000);
+
+  const googleDate = (value: Date) =>
+    value
+      .toISOString()
+      .replace(/[-:]/g, '')
+      .replace(/\.\d{3}Z$/, 'Z');
+
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: calendarTitle(entry),
+    dates: googleDate(start) + '/' + googleDate(end),
+    details: calendarDetails(entry),
+    location: entry.client,
+    trp: 'true',
+  });
+
+  return 'https://calendar.google.com/calendar/render?' + params.toString();
+}
+
+function CalendarScreen({
+  state,
+  credentials,
+  onState,
+}: {
+  state: WorkspaceState;
+  credentials: WorkspaceCredentials;
+  onState: (state: WorkspaceState) => void;
+}) {
   const workEntries = state.entries
     .filter((entry) => entry.mode === 'work')
     .sort((a, b) => entryDateTime(a).getTime() - entryDateTime(b).getTime());
 
   const [selectedDate, setSelectedDate] = useState(localDateValue());
+  const [calendarBusyId, setCalendarBusyId] = useState('');
+  const [calendarMessage, setCalendarMessage] = useState('');
+  const [calendarError, setCalendarError] = useState('');
   const selected = workEntries.filter((entry) => entry.date === selectedDate);
   const overlapIds = entriesOverlap(selected);
 
@@ -1539,6 +1608,44 @@ function CalendarScreen({ state }: { state: WorkspaceState }) {
     (sum, entry) => sum + entry.nextActions.filter((action) => !action.completedAt).length,
     0,
   );
+  const needsCalendar = selected.filter((entry) => !entry.googleCalendarEntered).length;
+
+  const createCalendarDraft = async (entry: WorkEntry) => {
+    setCalendarBusyId(entry.id);
+    setCalendarMessage('');
+    setCalendarError('');
+
+    const popup = window.open(
+      googleCalendarDraftUrl(entry),
+      '_blank',
+      'noopener,noreferrer',
+    );
+
+    if (!popup) {
+      setCalendarBusyId('');
+      setCalendarError(
+        'Calendar could not open. Allow pop-ups for NMRNL and try again.',
+      );
+      return;
+    }
+
+    try {
+      onState(await setEntryCalendarEntered(credentials, entry.id, true));
+      setCalendarMessage(
+        'Google Calendar draft opened for ' +
+          entry.client +
+          '. Review it and tap Save in Google Calendar.',
+      );
+    } catch (reason) {
+      setCalendarError(
+        reason instanceof Error
+          ? reason.message
+          : 'Calendar draft opened, but NMRNL could not mark the entry.',
+      );
+    } finally {
+      setCalendarBusyId('');
+    }
+  };
 
   return (
     <div className="page-stack">
@@ -1546,7 +1653,7 @@ function CalendarScreen({ state }: { state: WorkspaceState }) {
         <div>
           <div className="eyebrow">WORK PLANNER</div>
           <h2>Calendar</h2>
-          <p>See visits, overlaps, missing notes and follow-ups by day.</p>
+          <p>Plan work, open Google Calendar drafts, and see what still needs attention.</p>
         </div>
         <label className="calendar-date-jump">
           <span>Jump to date</span>
@@ -1554,13 +1661,14 @@ function CalendarScreen({ state }: { state: WorkspaceState }) {
         </label>
       </section>
 
-      <Panel title="14-day work view" subtitle="Red = missing support note · Amber = open action · Orange = overlap">
+      <Panel title="14-day work view" subtitle="Red = missing note · Amber = follow-up · Purple = needs calendar · Orange = overlap">
         <div className="calendar-day-grid">
           {days.map((day) => {
             const entries = workEntries.filter((entry) => entry.date === day);
             const overlaps = entriesOverlap(entries);
             const missing = entries.some((entry) => !hasSupportNoteContent(entry.supportNoteBreakdown));
             const actions = entries.some((entry) => entry.nextActions.some((action) => !action.completedAt));
+            const calendarGap = entries.some((entry) => !entry.googleCalendarEntered);
             return (
               <button
                 key={day}
@@ -1573,6 +1681,7 @@ function CalendarScreen({ state }: { state: WorkspaceState }) {
                 <div className="calendar-dots">
                   <i className={missing ? 'danger' : ''} />
                   <i className={actions ? 'warn' : ''} />
+                  <i className={calendarGap ? 'calendar-gap' : ''} />
                   <i className={overlaps.size ? 'overlap' : ''} />
                 </div>
               </button>
@@ -1587,8 +1696,28 @@ function CalendarScreen({ state }: { state: WorkspaceState }) {
         <StatCard label="KM" value={selectedKm.toFixed(1)} />
         <StatCard label="Missing notes" value={String(missingNotes)} />
         <StatCard label="Open actions" value={String(openActions)} />
+        <StatCard label="Needs calendar" value={String(needsCalendar)} />
         <StatCard label="Overlaps" value={String(overlapIds.size)} />
       </div>
+
+      <Panel
+        title="Google Calendar"
+        subtitle="Each button opens a pre-filled private Google Calendar draft. Review it and tap Save in Google Calendar."
+      >
+        <div className="google-calendar-panel">
+          <span className="google-calendar-mark">G</span>
+          <div>
+            <strong>Calendar export is ready</strong>
+            <small>
+              NMRNL tracks which work entries have had a calendar draft opened.
+              Editing the client, time, duration, travel or importance resets the
+              calendar status automatically.
+            </small>
+          </div>
+        </div>
+        {calendarError && <div className="error-banner calendar-message">{calendarError}</div>}
+        {calendarMessage && <div className="success-banner calendar-message">{calendarMessage}</div>}
+      </Panel>
 
       <Panel title={formatDate(selectedDate)} subtitle="Work entries for the selected day">
         {selected.length === 0 ? (
@@ -1603,11 +1732,26 @@ function CalendarScreen({ state }: { state: WorkspaceState }) {
                     <strong>{entry.startTime} · {entry.client}</strong>
                     <span>{entryType(entry.type).label} · {entry.minutes} min · {entryKilometres(entry).toFixed(1)} km</span>
                   </div>
-                  <div className="calendar-entry-flags">
-                    {!hasSupportNoteContent(entry.supportNoteBreakdown) && <b className="flag danger">Missing note</b>}
-                    {entry.nextActions.some((action) => !action.completedAt) && <b className="flag warn">Follow-up</b>}
-                    {overlapIds.has(entry.id) && <b className="flag overlap">Overlap</b>}
-                    {entry.googleCalendarEntered && <b className="flag ok">Calendar entered</b>}
+                  <div className="calendar-entry-side">
+                    <div className="calendar-entry-flags">
+                      {!hasSupportNoteContent(entry.supportNoteBreakdown) && <b className="flag danger">Missing note</b>}
+                      {entry.nextActions.some((action) => !action.completedAt) && <b className="flag warn">Follow-up</b>}
+                      {!entry.googleCalendarEntered && <b className="flag calendar-gap">Needs calendar</b>}
+                      {overlapIds.has(entry.id) && <b className="flag overlap">Overlap</b>}
+                      {entry.googleCalendarEntered && <b className="flag ok">Calendar entered</b>}
+                    </div>
+                    <button
+                      type="button"
+                      className={entry.googleCalendarEntered ? 'secondary compact calendar-button entered' : 'primary compact calendar-button'}
+                      onClick={() => void createCalendarDraft(entry)}
+                      disabled={calendarBusyId === entry.id}
+                    >
+                      {calendarBusyId === entry.id
+                        ? 'Opening…'
+                        : entry.googleCalendarEntered
+                          ? 'Open again'
+                          : 'Create Calendar Event'}
+                    </button>
                   </div>
                 </div>
               ))}
@@ -2602,7 +2746,13 @@ export function App() {
               onState={setState}
             />
           )}
-          {section === 'calendar' && <CalendarScreen state={state} />}
+          {section === 'calendar' && (
+            <CalendarScreen
+              state={state}
+              credentials={credentials}
+              onState={setState}
+            />
+          )}
           {section === 'payPeriod' && <PayPeriodScreen state={state} />}
           {section === 'actions' && (
             <ActionsScreen

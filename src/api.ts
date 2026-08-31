@@ -342,6 +342,21 @@ export function updateSupportNote(
   ).then((payload) => payload.state);
 }
 
+export function setEntryCalendarEntered(
+  credentials: WorkspaceCredentials,
+  entryId: string,
+  entered: boolean,
+): Promise<WorkspaceState> {
+  return workspaceRequest<{ state: WorkspaceState }>(
+    credentials,
+    '/entries/' + encodeURIComponent(entryId) + '/calendar',
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ entered }),
+    },
+  ).then((payload) => payload.state);
+}
+
 export function deleteEntry(
   credentials: WorkspaceCredentials,
   entryId: string,

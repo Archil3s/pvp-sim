@@ -2463,3 +2463,79 @@ button.danger-button {
     justify-content: flex-end;
   }
 }
+
+
+/* Work Google Calendar export */
+
+.calendar-dots .calendar-gap {
+  background: #8b5cf6;
+}
+
+.flag.calendar-gap {
+  color: #d8c9ff;
+  background: #241a44;
+  border: 1px solid #5b43a0;
+}
+
+.google-calendar-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #2f5f47;
+  background: #10261e;
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.google-calendar-panel > div {
+  display: grid;
+  gap: 3px;
+}
+
+.google-calendar-panel small {
+  color: #98b9a8;
+  line-height: 1.4;
+}
+
+.google-calendar-mark {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #fff;
+  color: #4285f4;
+  font-size: 20px;
+  font-weight: 950;
+}
+
+.calendar-message {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+.calendar-entry-side {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
+.calendar-button {
+  min-width: 150px;
+}
+
+.calendar-button.entered {
+  color: #b9f7d1;
+  border-color: #2f6c4a;
+}
+
+@media (max-width: 700px) {
+  .calendar-entry-side {
+    justify-items: stretch;
+  }
+
+  .calendar-button {
+    width: 100%;
+  }
+}
