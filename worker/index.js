@@ -169,6 +169,14 @@ function cloneDefaultData() {
     settings: { ...DEFAULT_WORK_SETTINGS },
     invoiceStatuses: {},
     invoiceBaselines: {},
+    drive: {
+      rootFolderId: '',
+      clientNotesFolderId: '',
+      invoicesFolderId: '',
+      accountEmail: '',
+    },
+    driveSupportNotes: {},
+    invoiceDriveFolders: {},
   };
 }
 
@@ -213,6 +221,32 @@ function normaliseData(value) {
     },
     invoiceStatuses,
     invoiceBaselines,
+    drive:
+      value.drive && typeof value.drive === 'object' && !Array.isArray(value.drive)
+        ? {
+            rootFolderId: stringValue(value.drive.rootFolderId),
+            clientNotesFolderId: stringValue(value.drive.clientNotesFolderId),
+            invoicesFolderId: stringValue(value.drive.invoicesFolderId),
+            accountEmail: stringValue(value.drive.accountEmail),
+          }
+        : {
+            rootFolderId: '',
+            clientNotesFolderId: '',
+            invoicesFolderId: '',
+            accountEmail: '',
+          },
+    driveSupportNotes:
+      value.driveSupportNotes &&
+      typeof value.driveSupportNotes === 'object' &&
+      !Array.isArray(value.driveSupportNotes)
+        ? value.driveSupportNotes
+        : {},
+    invoiceDriveFolders:
+      value.invoiceDriveFolders &&
+      typeof value.invoiceDriveFolders === 'object' &&
+      !Array.isArray(value.invoiceDriveFolders)
+        ? value.invoiceDriveFolders
+        : {},
   };
 }
 
@@ -385,6 +419,9 @@ export class SupervisorHub {
       settings: resolvedData.settings,
       invoiceStatuses: resolvedData.invoiceStatuses,
       invoiceBaselines: resolvedData.invoiceBaselines,
+      drive: resolvedData.drive,
+      driveSupportNotes: resolvedData.driveSupportNotes,
+      invoiceDriveFolders: resolvedData.invoiceDriveFolders,
     };
   }
 
@@ -989,6 +1026,71 @@ export class SupervisorHub {
     return json({ state: await this.snapshot(null, data) });
   }
 
+  async updateDriveSetup(request) {
+    const body = await readObject(request);
+    const data = await this.getData();
+
+    data.drive = {
+      rootFolderId: stringValue(body.rootFolderId),
+      clientNotesFolderId: stringValue(body.clientNotesFolderId),
+      invoicesFolderId: stringValue(body.invoicesFolderId),
+      accountEmail: stringValue(body.accountEmail),
+    };
+
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data) });
+  }
+
+  async updateDriveSupportNoteMeta(request, entryId) {
+    const body = await readObject(request);
+    const data = await this.getData();
+    const entry = data.entries.find((item) => item.id === entryId);
+
+    if (!entry) {
+      return json({ error: 'Entry not found.' }, { status: 404 });
+    }
+
+    const fileId = stringValue(body.fileId);
+    if (!fileId) {
+      return json({ error: 'Google Drive file id is required.' }, { status: 400 });
+    }
+
+    data.driveSupportNotes[entryId] = {
+      fileId,
+      fileName: stringValue(body.fileName),
+      parentFolderId: stringValue(body.parentFolderId),
+      webViewLink: stringValue(body.webViewLink),
+      updatedAt: stringValue(body.updatedAt) || new Date().toISOString(),
+    };
+
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data) });
+  }
+
+  async updateInvoiceDriveMeta(request, invoiceKey) {
+    const body = await readObject(request);
+    const data = await this.getData();
+
+    if (!/^\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}$/.test(invoiceKey)) {
+      return json({ error: 'Invalid invoice period key.' }, { status: 400 });
+    }
+
+    const folderId = stringValue(body.folderId);
+    if (!folderId) {
+      return json({ error: 'Google Drive invoice folder id is required.' }, { status: 400 });
+    }
+
+    data.invoiceDriveFolders[invoiceKey] = {
+      folderId,
+      webViewLink: stringValue(body.webViewLink),
+      summaryFileId: stringValue(body.summaryFileId),
+      updatedAt: stringValue(body.updatedAt) || new Date().toISOString(),
+    };
+
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data) });
+  }
+
   async updateWorkSettings(request) {
     const body = await readObject(request);
     const data = await this.getData();
@@ -1203,6 +1305,30 @@ export class SupervisorHub {
         );
       }
 
+      if (suffix === '/drive/setup' && request.method === 'PATCH') {
+        return this.updateDriveSetup(request);
+      }
+
+      const entryDriveUpdate = suffix.match(
+        /^\/entries\/([^/]+)\/drive$/,
+      );
+      if (entryDriveUpdate && request.method === 'PATCH') {
+        return this.updateDriveSupportNoteMeta(
+          request,
+          decodeURIComponent(entryDriveUpdate[1]),
+        );
+      }
+
+      const invoiceDriveUpdate = suffix.match(
+        /^\/invoices\/([^/]+)\/drive$/,
+      );
+      if (invoiceDriveUpdate && request.method === 'PATCH') {
+        return this.updateInvoiceDriveMeta(
+          request,
+          decodeURIComponent(invoiceDriveUpdate[1]),
+        );
+      }
+
       if (suffix === '/settings/work' && request.method === 'PATCH') {
         return this.updateWorkSettings(request);
       }
@@ -1272,6 +1398,12 @@ export default {
         accountEmail: ACCOUNT_EMAIL,
         storage: 'durable-object',
         now: new Date().toISOString(),
+      });
+    }
+
+    if (url.pathname === '/api/google/config' && request.method === 'GET') {
+      return json({
+        clientId: String(env.GOOGLE_OAUTH_CLIENT_ID || '').trim(),
       });
     }
 

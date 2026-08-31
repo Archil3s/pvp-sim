@@ -28,6 +28,9 @@ import {
   confirmRecoveryAuthenticator,
   setEntryCalendarEntered,
   setGeneralActionCompleted,
+  updateDriveSetup,
+  updateDriveSupportNoteMeta,
+  updateInvoiceDriveMeta,
   updateInvoiceStatus,
   updateWorkSettings,
   setVisitActionCompleted,
@@ -61,6 +64,10 @@ import {
   type WorkspaceSetupChallenge,
   type WorkspaceState,
 } from './model';
+import {
+  syncInvoicePeriodToDrive,
+  syncSupportNoteToDrive,
+} from './googleDrive';
 
 const TEMPORARY_LOGIN_BYPASS = true;
 
@@ -1367,11 +1374,13 @@ function entriesOverlap(entries: WorkEntry[]): Set<string> {
 
 function SupportNoteModal({
   entry,
+  state,
   credentials,
   onState,
   onClose,
 }: {
   entry: WorkEntry;
+  state: WorkspaceState;
   credentials: WorkspaceCredentials;
   onState: (state: WorkspaceState) => void;
   onClose: () => void;
@@ -1386,8 +1395,10 @@ function SupportNoteModal({
     supportNoteStatus(entry),
   );
   const [saving, setSaving] = useState(false);
+  const [driveBusy, setDriveBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const driveMeta = state.driveSupportNotes[entry.id];
 
   const saveNote = async (
     nextStatus = status,
@@ -1415,6 +1426,52 @@ function SupportNoteModal({
       );
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveToDrive = async () => {
+    if (!hasSupportNoteContent(noteText)) {
+      setError('Add support-note content before saving it to Google Drive.');
+      return;
+    }
+
+    setDriveBusy(true);
+    setError('');
+    setMessage('');
+
+    try {
+      let nextState = await updateSupportNote(credentials, entry.id, {
+        personName: personName.trim() || entry.client,
+        status,
+        noteText: noteText.trim(),
+      });
+
+      const synced = await syncSupportNoteToDrive({
+        entry,
+        personName: personName.trim() || entry.client,
+        status,
+        noteText: noteText.trim(),
+        payPeriodAnchorDate: nextState.settings.payPeriodAnchorDate,
+        drive: nextState.drive,
+        existingMeta: nextState.driveSupportNotes[entry.id],
+      });
+
+      nextState = await updateDriveSetup(credentials, synced.drive);
+      nextState = await updateDriveSupportNoteMeta(
+        credentials,
+        entry.id,
+        synced.meta,
+      );
+      onState(nextState);
+      setMessage('Support note synced to Google Drive.');
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Could not sync the support note to Google Drive.',
+      );
+    } finally {
+      setDriveBusy(false);
     }
   };
 
@@ -1497,6 +1554,40 @@ function SupportNoteModal({
               Last saved {new Date(entry.supportNoteUpdatedAt).toLocaleString()}
             </small>
           )}
+        </div>
+
+        <div className="support-note-drive">
+          <div>
+            <strong>Google Drive</strong>
+            <small>
+              {driveMeta
+                ? 'This support note has a linked Google Doc.'
+                : 'Creates a Google Doc inside the Work client / invoice-period folder.'}
+            </small>
+          </div>
+          <div className="support-note-drive-actions">
+            {driveMeta?.webViewLink && (
+              <button
+                type="button"
+                className="secondary compact"
+                onClick={() => window.open(driveMeta.webViewLink, '_blank', 'noopener,noreferrer')}
+              >
+                Open Drive Note
+              </button>
+            )}
+            <button
+              type="button"
+              className="secondary compact"
+              disabled={driveBusy || saving}
+              onClick={() => void saveToDrive()}
+            >
+              {driveBusy
+                ? 'Syncing…'
+                : driveMeta
+                  ? 'Re-sync to Drive'
+                  : 'Save to Drive'}
+            </button>
+          </div>
         </div>
 
         <div className="support-note-actions">
@@ -2144,6 +2235,56 @@ function PayPeriodScreen({
     }
   };
 
+  const syncInvoiceDrive = async () => {
+    if (!entries.length) return;
+
+    setBusy('drive');
+    setError('');
+    setMessage('');
+
+    try {
+      const synced = await syncInvoicePeriodToDrive({
+        invoiceKey: selectedInvoiceKey,
+        invoiceNumber,
+        startKey,
+        endKey,
+        entries,
+        hourlyRate: state.settings.hourlyRate,
+        fuelRate: state.settings.fuelRate,
+        payPeriodAnchorDate: state.settings.payPeriodAnchorDate,
+        drive: state.drive,
+        existingInvoice: state.invoiceDriveFolders[selectedInvoiceKey],
+        supportNoteMetas: state.driveSupportNotes,
+      });
+
+      let nextState = await updateDriveSetup(credentials, synced.drive);
+      for (const entry of entries) {
+        const meta = synced.supportNoteMetas[entry.id];
+        if (!meta) continue;
+        nextState = await updateDriveSupportNoteMeta(credentials, entry.id, meta);
+      }
+      nextState = await updateInvoiceDriveMeta(
+        credentials,
+        selectedInvoiceKey,
+        synced.invoice,
+      );
+      onState(nextState);
+      setMessage(
+        'Invoice ' + invoiceNumber + ' Drive folder and support-note links are synced.',
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Could not sync this invoice period to Google Drive.',
+      );
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const invoiceDriveMeta = state.invoiceDriveFolders[selectedInvoiceKey];
+
   const baseline = state.invoiceBaselines[selectedInvoiceKey];
   const delta =
     baseline == null || selectedStatus === 'notSubmitted'
@@ -2288,6 +2429,50 @@ function PayPeriodScreen({
           >
             Build Invoice / PDF
           </button>
+          <button
+            type="button"
+            className="secondary"
+            disabled={!entries.length || busy === 'drive'}
+            onClick={() => void syncInvoiceDrive()}
+          >
+            {busy === 'drive'
+              ? 'Syncing Drive…'
+              : invoiceDriveMeta
+                ? 'Re-sync Invoice to Drive'
+                : 'Sync Invoice to Drive'}
+          </button>
+          {invoiceDriveMeta?.webViewLink && (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() =>
+                window.open(
+                  invoiceDriveMeta.webViewLink,
+                  '_blank',
+                  'noopener,noreferrer',
+                )
+              }
+            >
+              Open Drive Folder
+            </button>
+          )}
+        </div>
+      </Panel>
+
+      <Panel
+        title="Google Drive"
+        subtitle="Work notes are organised by client and invoice period. Invoice sync creates a summary document and links the period's support-note Google Docs."
+      >
+        <div className="drive-workflow-summary">
+          <div className={'drive-status-dot ' + (state.drive.rootFolderId ? 'connected' : '')} />
+          <div>
+            <strong>{state.drive.rootFolderId ? 'Work Drive folders ready' : 'Connect Work Google Drive'}</strong>
+            <small>
+              {invoiceDriveMeta
+                ? 'Invoice ' + invoiceNumber + ' was last synced ' + new Date(invoiceDriveMeta.updatedAt).toLocaleString()
+                : 'Tap Sync Invoice to Drive above. Google will ask for Drive + Docs permission the first time.'}
+            </small>
+          </div>
         </div>
       </Panel>
 
@@ -2598,6 +2783,7 @@ function EntriesScreen({
       {supportNoteEntry && (
         <SupportNoteModal
           entry={supportNoteEntry}
+          state={state}
           credentials={credentials}
           onState={onState}
           onClose={() => setSupportNoteEntry(null)}

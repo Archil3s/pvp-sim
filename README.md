@@ -30,6 +30,9 @@ The pre-NMRNL state of this repository is preserved on:
 - Work earnings + travel reimbursement using editable hourly/KM rates
 - Invoice numbering, Not Submitted / Submitted / Paid tracking, owed/paid totals and baseline-change tracking
 - Mobile printable invoice/PDF view
+- Google Drive Work folder setup (NMRNL Work / Client Notes / Invoices)
+- Support-note Google Doc sync into client → invoice-period → work-type folders
+- Invoice-period Drive folder sync with invoice summary Google Doc and shortcuts to support notes
 - Mobile + desktop navigation
 
 ## Temporary build access
@@ -106,5 +109,9 @@ After the Worker is renamed to `nmrnl` in the Cloudflare dashboard, update the W
 
 ## Next port slices
 
-- Google Drive / Calendar
 - Admin review and charts
+
+
+## Google Drive runtime configuration
+
+The Work Google Drive port uses Google Identity Services in the browser and the Drive + Docs APIs. Set the Worker runtime variable `GOOGLE_OAUTH_CLIENT_ID` to the public OAuth Web client ID. The OAuth client must allow the NMRNL production origin as an Authorized JavaScript origin. No Google client secret is exposed to the browser.

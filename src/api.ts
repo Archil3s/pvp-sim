@@ -1,6 +1,9 @@
 import type {
+  DriveConnectionState,
+  DriveSupportNoteMeta,
   EntryDraft,
   GeneralAction,
+  InvoiceDriveMeta,
   InvoiceStatus,
   Mode,
   SupportNoteStatus,
@@ -388,6 +391,50 @@ export function updateInvoiceStatus(
     {
       method: 'PATCH',
       body: JSON.stringify({ status, currentTotal }),
+    },
+  ).then((payload) => payload.state);
+}
+
+export function updateDriveSetup(
+  credentials: WorkspaceCredentials,
+  drive: DriveConnectionState,
+): Promise<WorkspaceState> {
+  return workspaceRequest<{ state: WorkspaceState }>(
+    credentials,
+    '/drive/setup',
+    {
+      method: 'PATCH',
+      body: JSON.stringify(drive),
+    },
+  ).then((payload) => payload.state);
+}
+
+export function updateDriveSupportNoteMeta(
+  credentials: WorkspaceCredentials,
+  entryId: string,
+  meta: DriveSupportNoteMeta,
+): Promise<WorkspaceState> {
+  return workspaceRequest<{ state: WorkspaceState }>(
+    credentials,
+    '/entries/' + encodeURIComponent(entryId) + '/drive',
+    {
+      method: 'PATCH',
+      body: JSON.stringify(meta),
+    },
+  ).then((payload) => payload.state);
+}
+
+export function updateInvoiceDriveMeta(
+  credentials: WorkspaceCredentials,
+  invoiceKey: string,
+  meta: InvoiceDriveMeta,
+): Promise<WorkspaceState> {
+  return workspaceRequest<{ state: WorkspaceState }>(
+    credentials,
+    '/invoices/' + encodeURIComponent(invoiceKey) + '/drive',
+    {
+      method: 'PATCH',
+      body: JSON.stringify(meta),
     },
   ).then((payload) => payload.state);
 }

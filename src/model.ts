@@ -34,6 +34,28 @@ export interface WorkSettings {
   payPeriodAnchorDate: string;
 }
 
+export interface DriveConnectionState {
+  rootFolderId: string;
+  clientNotesFolderId: string;
+  invoicesFolderId: string;
+  accountEmail: string;
+}
+
+export interface DriveSupportNoteMeta {
+  fileId: string;
+  fileName: string;
+  parentFolderId: string;
+  webViewLink: string;
+  updatedAt: string;
+}
+
+export interface InvoiceDriveMeta {
+  folderId: string;
+  webViewLink: string;
+  summaryFileId: string;
+  updatedAt: string;
+}
+
 export interface EntryTypeDefinition {
   key: EntryTypeKey;
   label: string;
@@ -181,6 +203,9 @@ export interface WorkspaceState {
   settings: WorkSettings;
   invoiceStatuses: Record<string, InvoiceStatus>;
   invoiceBaselines: Record<string, number>;
+  drive: DriveConnectionState;
+  driveSupportNotes: Record<string, DriveSupportNoteMeta>;
+  invoiceDriveFolders: Record<string, InvoiceDriveMeta>;
 }
 
 export interface WorkspaceCredentials {

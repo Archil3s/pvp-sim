@@ -2808,3 +2808,93 @@ button.danger-button {
     text-align: left;
   }
 }
+
+
+/* Work Google Drive workflow */
+
+.support-note-drive {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+  margin-bottom: 72px;
+  border: 1px solid #2f5f47;
+  border-radius: 14px;
+  background: #10261e;
+  padding: 11px 12px;
+}
+
+.support-note-drive > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.support-note-drive small {
+  color: #98b9a8;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.support-note-drive-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.drive-workflow-summary {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.drive-workflow-summary > div:last-child {
+  display: grid;
+  gap: 3px;
+}
+
+.drive-workflow-summary small {
+  color: #8396c7;
+  line-height: 1.45;
+}
+
+.drive-status-dot {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #53617d;
+  box-shadow: 0 0 0 5px rgba(83, 97, 125, .12);
+}
+
+.drive-status-dot.connected {
+  background: #31e981;
+  box-shadow: 0 0 0 5px rgba(49, 233, 129, .12);
+}
+
+.invoice-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 700px) {
+  .support-note-drive {
+    align-items: stretch;
+    flex-direction: column;
+    margin-bottom: 78px;
+  }
+
+  .support-note-drive-actions {
+    justify-content: stretch;
+  }
+
+  .support-note-drive-actions button {
+    flex: 1;
+  }
+
+  .invoice-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+}
