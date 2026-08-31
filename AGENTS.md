@@ -1,22 +1,21 @@
-# Codex Supervisor Dashboard
+# NMRNL
 
-This repository is the Cloudflare-hosted viewer for the local DD Skiller Codex supervisor. It no longer contains the PvP simulator.
+This repository is the Cloudflare-native port target for `Archil3s/support_worker_log`.
 
 ## Architecture
-- `src/` is the React/Vite viewer.
+- `src/` is the React/Vite application.
 - `worker/index.js` is the Cloudflare Worker API.
-- `SupervisorHub` is a Durable Object used to hold the latest private supervisor telemetry for each session and fan it out over WebSockets.
-- `wrangler.jsonc` deploys the Worker and `dist/` static assets as one Cloudflare unit.
+- `NmrnlStore` is the first persistence boundary and uses Durable Object SQLite storage.
+- `wrangler.jsonc` deploys the Worker and `dist/` static assets together.
 
-## Security
-- Session creation returns separate random write and viewer tokens.
-- The Windows supervisor keeps the write token locally and uses it only for telemetry POSTs.
-- The browser viewer needs the session ID plus viewer token.
-- Never commit live session tokens, GitHub tokens, OmniRoute keys, or other secrets.
+## Porting rules
+- Port workflows, not Firebase implementation details.
+- Keep the application responsive on phone and desktop.
+- Preserve the dark visual language where practical while simplifying input-heavy screens.
+- Keep support-work records structured and exportable.
+- Prefer Cloudflare-native persistence and server endpoints.
+- Do not commit client data, access tokens, Google tokens, or other secrets.
+- `npm run build` must pass before shipping.
 
-## Development rules
-- Keep the dashboard useful on mobile and desktop.
-- Preserve WebSocket live updates and polling fallback.
-- Keep the API backwards-compatible with supervisor telemetry payloads when possible.
-- Do not reintroduce PvP simulator/Three.js code unless the repository purpose is explicitly changed again.
-- `npm run build` must pass before shipping frontend changes.
+## History
+The previous pvp-sim / Codex Supervisor implementation is preserved on `archive/pvp-sim-before-nmrnl`.
