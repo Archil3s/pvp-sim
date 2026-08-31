@@ -66,7 +66,7 @@ The workflow requires these GitHub Actions repository secrets:
 
 See `cloudflare/README.md` for the one-time setup and required Cloudflare API token permissions.
 
-The temporary in-app custom recovery-email sender remains in the Worker until the Cloudflare Access identity flow is fully switched over. Do not configure `RECOVERY_FROM_EMAIL` just for Access setup.
+NMRNL no longer sends its own recovery email. Cloudflare Access is the email ownership check. After Cloudflare verifies `blenhiemmaleroom@gmail.com`, NMRNL can replace a lost Google Authenticator secret with a new QR code. There is no `RECOVERY_FROM_EMAIL` requirement.
 
 ## Cloudflare deployment name
 
@@ -76,8 +76,6 @@ After the Worker is renamed to `nmrnl` in the Cloudflare dashboard, update the W
 
 ## Next port slices
 
-- Cloudflare Access identity enforcement inside the Worker
-- Replace the temporary custom recovery-email sender
 - Entry editing
 - Full support-note editor
 - Calendar

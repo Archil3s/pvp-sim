@@ -46,9 +46,6 @@ export function loadCredentials(): WorkspaceCredentials | null {
       }
     }
 
-    // Backwards compatibility for workspaces created before Authenticator
-    // enrollment existed. The legacy owner token is accepted only until that
-    // workspace completes the one-time TOTP upgrade.
     const legacyRaw = window.localStorage.getItem(LEGACY_KEY);
     if (!legacyRaw) return null;
     const legacy = JSON.parse(legacyRaw) as LegacyCredentials;
@@ -124,50 +121,12 @@ async function workspaceRequest<T>(
   });
 }
 
-export async function requestAccountAccessEmail(): Promise<{
-  sentTo: string;
-  expiresInSeconds: number;
-}> {
-  const response = await fetch('/api/account/access/request', {
-    method: 'POST',
-    cache: 'no-store',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email: NMRNL_ACCOUNT_EMAIL }),
-  });
-
-  return parseResponse<{
-    sentTo: string;
-    expiresInSeconds: number;
-  }>(response);
-}
-
-export async function verifyAccountAccessEmail(
-  code: string,
-): Promise<{ creationToken: string }> {
-  const response = await fetch('/api/account/access/verify', {
-    method: 'POST',
-    cache: 'no-store',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      email: NMRNL_ACCOUNT_EMAIL,
-      code,
-    }),
-  });
-
-  return parseResponse<{ creationToken: string }>(response);
-}
-
-export async function createWorkspace(
-  creationToken: string,
-): Promise<WorkspaceSetupChallenge> {
+export async function createWorkspace(): Promise<WorkspaceSetupChallenge> {
   const response = await fetch('/api/workspace', {
     method: 'POST',
     cache: 'no-store',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      email: NMRNL_ACCOUNT_EMAIL,
-      creationToken,
-    }),
+    body: '{}',
   });
 
   return parseResponse<WorkspaceSetupChallenge>(response);
@@ -249,33 +208,15 @@ export async function confirmAuthenticatorEnrollment(
   };
 }
 
-
-export async function requestRecoveryEmail(
+export function beginAccessRecovery(
   workspaceId: string,
-): Promise<{ sentTo: string; expiresInSeconds: number }> {
-  return authRequest<{ sentTo: string; expiresInSeconds: number }>(
-    workspaceId,
-    '/auth/recovery/request',
-    {
-      method: 'POST',
-      body: JSON.stringify({ email: NMRNL_ACCOUNT_EMAIL }),
-    },
-  );
-}
-
-export async function verifyRecoveryEmailCode(
-  workspaceId: string,
-  code: string,
 ): Promise<EmailRecoveryChallenge> {
   return authRequest<EmailRecoveryChallenge>(
     workspaceId,
-    '/auth/recovery/verify',
+    '/auth/recovery/start',
     {
       method: 'POST',
-      body: JSON.stringify({
-        email: NMRNL_ACCOUNT_EMAIL,
-        code,
-      }),
+      body: '{}',
     },
   );
 }

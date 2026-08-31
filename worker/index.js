@@ -47,89 +47,6 @@ function randomToken() {
   return bytesToHex(randomBytes(32));
 }
 
-function randomSixDigitCode() {
-  const range = 1_000_000;
-  const max = Math.floor(0x1_0000_0000 / range) * range;
-  const values = new Uint32Array(1);
-
-  do {
-    crypto.getRandomValues(values);
-  } while (values[0] >= max);
-
-  return String(values[0] % range).padStart(6, '0');
-}
-
-async function sendRecoveryEmail(env, code, workspaceId) {
-  const from = String(env.RECOVERY_FROM_EMAIL || '').trim();
-  if (!from) {
-    throw new Error('RECOVERY_FROM_EMAIL is not configured.');
-  }
-
-  const message = {
-    to: ACCOUNT_EMAIL,
-    from,
-    subject:
-      workspaceId === 'new-workspace'
-        ? 'NMRNL account verification code'
-        : 'NMRNL recovery code',
-    text:
-      (workspaceId === 'new-workspace'
-        ? 'Your NMRNL account verification code is '
-        : 'Your NMRNL recovery code is ') +
-      code +
-      '. It expires in 10 minutes.' +
-      (workspaceId === 'new-workspace' ? '' : ' Workspace: ' + workspaceId) +
-      '. If you did not request this, ignore this email.',
-    html:
-      '<h2>' +
-      (workspaceId === 'new-workspace'
-        ? 'NMRNL account verification'
-        : 'NMRNL account recovery') +
-      '</h2>' +
-      '<p>Your code is:</p>' +
-      '<p style="font-size:32px;font-weight:800;letter-spacing:6px">' +
-      code +
-      '</p>' +
-      '<p>This code expires in 10 minutes.</p>' +
-      (workspaceId === 'new-workspace'
-        ? ''
-        : '<p>Workspace: <code>' + workspaceId + '</code></p>') +
-      '<p>If you did not request this, ignore this email.</p>',
-  };
-
-  if (env.RECOVERY_EMAIL && typeof env.RECOVERY_EMAIL.send === 'function') {
-    await env.RECOVERY_EMAIL.send(message);
-    return;
-  }
-
-  const accountId = String(env.CLOUDFLARE_EMAIL_ACCOUNT_ID || '').trim();
-  const apiToken = String(env.CLOUDFLARE_EMAIL_API_TOKEN || '').trim();
-
-  if (!accountId || !apiToken) {
-    throw new Error(
-      'Recovery email delivery is not configured. Add a RECOVERY_EMAIL binding or Cloudflare Email Service API credentials.',
-    );
-  }
-
-  const response = await fetch(
-    'https://api.cloudflare.com/client/v4/accounts/' +
-      encodeURIComponent(accountId) +
-      '/email/sending/send',
-    {
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer ' + apiToken,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(message),
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error('Cloudflare Email Service rejected the recovery email.');
-  }
-}
-
 function generateTotpSecret() {
   return base32Encode(randomBytes(20));
 }
@@ -328,6 +245,29 @@ function sessionList(meta) {
         Date.parse(session.expiresAt) > now,
     )
     .slice(-9);
+}
+
+async function approvedAccessEmail(request, ctx) {
+  let email = '';
+
+  if (ctx?.access) {
+    try {
+      const identity = await ctx.access.getIdentity();
+      email = String(identity?.email || '').trim().toLowerCase();
+    } catch {
+      email = '';
+    }
+  }
+
+  if (!email) {
+    email = String(
+      request.headers.get('cf-access-authenticated-user-email') || '',
+    )
+      .trim()
+      .toLowerCase();
+  }
+
+  return email === ACCOUNT_EMAIL ? email : '';
 }
 
 export class SupervisorHub {
@@ -570,130 +510,7 @@ export class SupervisorHub {
     });
   }
 
-  async requestAccountAccess(request) {
-    const body = await readObject(request);
-    const email = stringValue(body.email).toLowerCase();
-
-    if (email !== ACCOUNT_EMAIL) {
-      return json({ error: 'This email account is not allowed.' }, { status: 403 });
-    }
-
-    const now = Date.now();
-    const sendRate = (await this.state.storage.get('accountAccessSendRate')) || null;
-    if (
-      sendRate?.lastSentAt &&
-      now - sendRate.lastSentAt < RECOVERY_SEND_COOLDOWN_MS
-    ) {
-      const retryAfterSeconds = Math.ceil(
-        (RECOVERY_SEND_COOLDOWN_MS - (now - sendRate.lastSentAt)) / 1000,
-      );
-      return json(
-        { error: 'An email access code was just sent. Try again shortly.' },
-        {
-          status: 429,
-          headers: { 'retry-after': String(retryAfterSeconds) },
-        },
-      );
-    }
-
-    const code = randomSixDigitCode();
-    const salt = randomToken().slice(0, 24);
-    await this.state.storage.put('accountAccessChallenge', {
-      salt,
-      codeHash: await hashToken(salt + ':' + code),
-      expiresAt: new Date(now + ACCOUNT_ACCESS_TTL_MS).toISOString(),
-      attempts: 0,
-    });
-
-    try {
-      await sendRecoveryEmail(this.env, code, 'new-workspace');
-    } catch (error) {
-      await this.state.storage.delete('accountAccessChallenge');
-      return json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : 'Account verification email could not be sent.',
-        },
-        { status: 503 },
-      );
-    }
-
-    await this.state.storage.put('accountAccessSendRate', { lastSentAt: now });
-
-    return json({
-      sentTo: ACCOUNT_EMAIL,
-      expiresInSeconds: Math.floor(ACCOUNT_ACCESS_TTL_MS / 1000),
-    });
-  }
-
-  async verifyAccountAccess(request) {
-    const body = await readObject(request);
-    const email = stringValue(body.email).toLowerCase();
-    const code = stringValue(body.code);
-
-    if (email !== ACCOUNT_EMAIL) {
-      return json({ error: 'This email account is not allowed.' }, { status: 403 });
-    }
-    if (!/^\d{6}$/.test(code)) {
-      return json({ error: 'Enter the 6-digit email access code.' }, { status: 400 });
-    }
-
-    const challenge =
-      (await this.state.storage.get('accountAccessChallenge')) || null;
-
-    if (!challenge || Date.parse(challenge.expiresAt) <= Date.now()) {
-      await this.state.storage.delete('accountAccessChallenge');
-      return json({ error: 'Email access code expired. Request a new one.' }, { status: 410 });
-    }
-
-    if ((challenge.attempts || 0) >= MAX_RECOVERY_ATTEMPTS) {
-      await this.state.storage.delete('accountAccessChallenge');
-      return json({ error: 'Too many incorrect codes. Request a new one.' }, { status: 429 });
-    }
-
-    const suppliedHash = await hashToken(challenge.salt + ':' + code);
-    if (!codesEqual(suppliedHash, challenge.codeHash)) {
-      challenge.attempts = (challenge.attempts || 0) + 1;
-      await this.state.storage.put('accountAccessChallenge', challenge);
-      return json({ error: 'That email access code is not valid.' }, { status: 401 });
-    }
-
-    const creationToken = randomToken();
-    await this.state.storage.put('accountCreationGrant', {
-      tokenHash: await hashToken(creationToken),
-      expiresAt: new Date(Date.now() + ACCOUNT_ACCESS_TTL_MS).toISOString(),
-    });
-    await this.state.storage.delete('accountAccessChallenge');
-
-    return json({ creationToken });
-  }
-
-  async consumeAccountCreationGrant(request) {
-    const body = await readObject(request);
-    const token = stringValue(body.creationToken);
-    const email = stringValue(body.email).toLowerCase();
-    const grant = (await this.state.storage.get('accountCreationGrant')) || null;
-
-    if (email !== ACCOUNT_EMAIL || !token || !grant) {
-      return json({ allowed: false }, { status: 401 });
-    }
-
-    if (Date.parse(grant.expiresAt) <= Date.now()) {
-      await this.state.storage.delete('accountCreationGrant');
-      return json({ allowed: false }, { status: 401 });
-    }
-
-    if (!codesEqual(await hashToken(token), grant.tokenHash)) {
-      return json({ allowed: false }, { status: 401 });
-    }
-
-    await this.state.storage.delete('accountCreationGrant');
-    return json({ allowed: true });
-  }
-
-  async requestEmailRecovery(request) {
+  async beginAccessRecovery() {
     const meta = await this.getMeta();
     if (!meta) return json({ error: 'Workspace not found.' }, { status: 404 });
     if (!meta.totpEnabled) {
@@ -703,102 +520,14 @@ export class SupervisorHub {
       );
     }
 
-    const body = await readObject(request);
-    const email = stringValue(body.email).toLowerCase();
-    if (email !== ACCOUNT_EMAIL) {
-      return json({ error: 'This email account is not allowed.' }, { status: 403 });
-    }
-
-    const now = Date.now();
-    const sendRate = (await this.state.storage.get('recoverySendRate')) || null;
-    if (sendRate?.lastSentAt && now - sendRate.lastSentAt < RECOVERY_SEND_COOLDOWN_MS) {
-      const retryAfterSeconds = Math.ceil(
-        (RECOVERY_SEND_COOLDOWN_MS - (now - sendRate.lastSentAt)) / 1000,
-      );
-      return json(
-        { error: 'A recovery email was just sent. Try again shortly.' },
-        {
-          status: 429,
-          headers: { 'retry-after': String(retryAfterSeconds) },
-        },
-      );
-    }
-
-    const code = randomSixDigitCode();
-    const salt = randomToken().slice(0, 24);
-    const challenge = {
-      salt,
-      codeHash: await hashToken(salt + ':' + code),
-      expiresAt: new Date(now + RECOVERY_CODE_TTL_MS).toISOString(),
-      attempts: 0,
-    };
-
-    await this.state.storage.put('recoveryChallenge', challenge);
-
-    try {
-      await sendRecoveryEmail(this.env, code, meta.workspaceId);
-    } catch (error) {
-      await this.state.storage.delete('recoveryChallenge');
-      return json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : 'Recovery email could not be sent.',
-        },
-        { status: 503 },
-      );
-    }
-
-    await this.state.storage.put('recoverySendRate', { lastSentAt: now });
-
-    return json({
-      sentTo: ACCOUNT_EMAIL,
-      expiresInSeconds: Math.floor(RECOVERY_CODE_TTL_MS / 1000),
-    });
-  }
-
-  async verifyEmailRecovery(request) {
-    const meta = await this.getMeta();
-    if (!meta) return json({ error: 'Workspace not found.' }, { status: 404 });
-
-    const body = await readObject(request);
-    const email = stringValue(body.email).toLowerCase();
-    const code = stringValue(body.code);
-
-    if (email !== ACCOUNT_EMAIL) {
-      return json({ error: 'This email account is not allowed.' }, { status: 403 });
-    }
-    if (!/^\d{6}$/.test(code)) {
-      return json({ error: 'Enter the 6-digit email recovery code.' }, { status: 400 });
-    }
-
-    const challenge = (await this.state.storage.get('recoveryChallenge')) || null;
-    if (!challenge || Date.parse(challenge.expiresAt) <= Date.now()) {
-      await this.state.storage.delete('recoveryChallenge');
-      return json({ error: 'Recovery code expired. Request a new one.' }, { status: 410 });
-    }
-
-    if ((challenge.attempts || 0) >= MAX_RECOVERY_ATTEMPTS) {
-      await this.state.storage.delete('recoveryChallenge');
-      return json({ error: 'Too many incorrect recovery codes. Request a new one.' }, { status: 429 });
-    }
-
-    const suppliedHash = await hashToken(challenge.salt + ':' + code);
-    if (!codesEqual(suppliedHash, challenge.codeHash)) {
-      challenge.attempts = (challenge.attempts || 0) + 1;
-      await this.state.storage.put('recoveryChallenge', challenge);
-      return json({ error: 'That email recovery code is not valid.' }, { status: 401 });
-    }
-
     const totpSecret = generateTotpSecret();
     const recoveryToken = randomToken();
+
     await this.state.storage.put('recoveryEnrollment', {
       tokenHash: await hashToken(recoveryToken),
       totpSecret,
-      expiresAt: new Date(Date.now() + RECOVERY_ENROL_TTL_MS).toISOString(),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
     });
-    await this.state.storage.delete('recoveryChallenge');
 
     return json({
       workspaceId: meta.workspaceId,
@@ -819,7 +548,10 @@ export class SupervisorHub {
 
     if (!enrollment || Date.parse(enrollment.expiresAt) <= Date.now()) {
       await this.state.storage.delete('recoveryEnrollment');
-      return json({ error: 'Recovery setup expired. Start recovery again.' }, { status: 410 });
+      return json(
+        { error: 'Recovery setup expired. Start recovery again.' },
+        { status: 410 },
+      );
     }
 
     if (
@@ -830,7 +562,10 @@ export class SupervisorHub {
     }
 
     if (!(await verifyTotp(enrollment.totpSecret, code))) {
-      return json({ error: 'That new Authenticator code is not valid.' }, { status: 401 });
+      return json(
+        { error: 'That new Authenticator code is not valid.' },
+        { status: 401 },
+      );
     }
 
     meta.totpSecret = enrollment.totpSecret;
@@ -839,7 +574,6 @@ export class SupervisorHub {
     delete meta.ownerTokenHash;
 
     await this.state.storage.delete('recoveryEnrollment');
-    await this.state.storage.delete('recoveryChallenge');
 
     const sessionToken = await this.issueSession(meta, true);
     return json({
@@ -1093,18 +827,6 @@ export class SupervisorHub {
     try {
       const url = new URL(request.url);
 
-      if (url.pathname === '/api/account/access/request' && request.method === 'POST') {
-        return this.requestAccountAccess(request);
-      }
-
-      if (url.pathname === '/api/account/access/verify' && request.method === 'POST') {
-        return this.verifyAccountAccess(request);
-      }
-
-      if (url.pathname === '/api/account/access/consume' && request.method === 'POST') {
-        return this.consumeAccountCreationGrant(request);
-      }
-
       const workspaceMatch = url.pathname.match(
         /^\/api\/workspace\/([a-f0-9]{16})(\/.*)?$/i,
       );
@@ -1127,12 +849,8 @@ export class SupervisorHub {
         return this.loginWithAuthenticator(request);
       }
 
-      if (suffix === '/auth/recovery/request' && request.method === 'POST') {
-        return this.requestEmailRecovery(request);
-      }
-
-      if (suffix === '/auth/recovery/verify' && request.method === 'POST') {
-        return this.verifyEmailRecovery(request);
+      if (suffix === '/auth/recovery/start' && request.method === 'POST') {
+        return this.beginAccessRecovery();
       }
 
       if (suffix === '/auth/recovery/confirm' && request.method === 'POST') {
@@ -1200,64 +918,37 @@ export class SupervisorHub {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    if (url.pathname.startsWith('/api/')) {
+      const email = await approvedAccessEmail(request, ctx);
+      if (!email) {
+        return json(
+          {
+            error:
+              'Cloudflare Access must verify ' +
+              ACCOUNT_EMAIL +
+              ' before NMRNL API access.',
+          },
+          { status: 403 },
+        );
+      }
+    }
 
     if (url.pathname === '/api/health') {
       return json({
         ok: true,
         app: 'NMRNL',
         service: 'pvp-sim',
-        auth: 'totp+fixed-email-recovery',
+        auth: 'cloudflare-access+totp',
         accountEmail: ACCOUNT_EMAIL,
         storage: 'durable-object',
         now: new Date().toISOString(),
       });
     }
 
-    if (
-      (url.pathname === '/api/account/access/request' ||
-        url.pathname === '/api/account/access/verify') &&
-      request.method === 'POST'
-    ) {
-      const gateId = env.SUPERVISOR_HUB.idFromName('nmrnl:account-gate');
-      return env.SUPERVISOR_HUB.get(gateId).fetch(request);
-    }
-
     if (url.pathname === '/api/workspace' && request.method === 'POST') {
-      let body;
-      try {
-        body = await request.json();
-      } catch {
-        return json({ error: 'Email verification is required.' }, { status: 401 });
-      }
-
-      const email = stringValue(body.email).toLowerCase();
-      const creationToken = stringValue(body.creationToken);
-      if (email !== ACCOUNT_EMAIL || !creationToken) {
-        return json(
-          { error: 'Only the approved email account can create NMRNL workspaces.' },
-          { status: 403 },
-        );
-      }
-
-      const gateId = env.SUPERVISOR_HUB.idFromName('nmrnl:account-gate');
-      const gate = env.SUPERVISOR_HUB.get(gateId);
-      const consumeResponse = await gate.fetch(
-        new Request(url.origin + '/api/account/access/consume', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ email, creationToken }),
-        }),
-      );
-
-      if (!consumeResponse.ok) {
-        return json(
-          { error: 'Email access verification expired or was already used.' },
-          { status: 401 },
-        );
-      }
-
       const workspaceId = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
       const totpSecret = generateTotpSecret();
       const objectId = env.SUPERVISOR_HUB.idFromName('nmrnl:' + workspaceId);

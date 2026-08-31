@@ -8,6 +8,7 @@ import {
 import QRCode from 'qrcode';
 
 import {
+  beginAccessRecovery,
   beginAuthenticatorEnrollment,
   clearCredentials,
   confirmAuthenticatorEnrollment,
@@ -22,14 +23,10 @@ import {
   loginWithTotp,
   NMRNL_ACCOUNT_EMAIL,
   rememberWorkspaceId,
-  requestRecoveryEmail,
-  requestAccountAccessEmail,
   saveCredentials,
   confirmRecoveryAuthenticator,
   setGeneralActionCompleted,
   setVisitActionCompleted,
-  verifyRecoveryEmailCode,
-  verifyAccountAccessEmail,
 } from './api';
 import {
   ENTRY_TYPES,
@@ -120,8 +117,6 @@ function RecoveryAccess({
   onRecovered: (credentials: WorkspaceCredentials, state: WorkspaceState) => void;
 }) {
   const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId);
-  const [stage, setStage] = useState<'request' | 'email-code' | 'authenticator'>('request');
-  const [emailCode, setEmailCode] = useState('');
   const [authCode, setAuthCode] = useState('');
   const [challenge, setChallenge] = useState<EmailRecoveryChallenge | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
@@ -152,7 +147,7 @@ function RecoveryAccess({
     };
   }, [challenge]);
 
-  const sendCode = async () => {
+  const startRecovery = async () => {
     const id = workspaceId.trim().toLowerCase();
     if (id.length !== 16) {
       setError('Enter the 16-character Workspace ID first.');
@@ -162,32 +157,17 @@ function RecoveryAccess({
     setBusy(true);
     setError('');
     try {
-      await requestRecoveryEmail(id);
+      const next = await beginAccessRecovery(id);
       rememberWorkspaceId(id);
       setWorkspaceId(id);
-      setStage('email-code');
-      setEmailCode('');
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not send recovery email.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const verifyEmail = async (event: FormEvent) => {
-    event.preventDefault();
-    if (emailCode.length !== 6) return;
-
-    setBusy(true);
-    setError('');
-    try {
-      const next = await verifyRecoveryEmailCode(workspaceId, emailCode);
       setChallenge(next);
       setAuthCode('');
-      setStage('authenticator');
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Recovery code rejected.');
-      setEmailCode('');
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Could not start Authenticator recovery.',
+      );
     } finally {
       setBusy(false);
     }
@@ -226,32 +206,27 @@ function RecoveryAccess({
         <div className="code-login-brand">
           <div className="brand-mark">N</div>
           <div>
-            <div className="eyebrow">ACCOUNT RECOVERY</div>
-            <h1>
-              {stage === 'request'
-                ? 'Recover NMRNL'
-                : stage === 'email-code'
-                  ? 'Check your email'
-                  : 'Set up a new Authenticator'}
-            </h1>
+            <div className="eyebrow">CLOUDFLARE-VERIFIED RECOVERY</div>
+            <h1>{challenge ? 'Set up a new Authenticator' : 'Recover NMRNL'}</h1>
           </div>
         </div>
 
         {error && <div className="error-banner">{error}</div>}
 
-        {stage === 'request' && (
+        {!challenge ? (
           <div className="recovery-stack">
             <p className="setup-lead">
-              Recovery is locked to the only approved NMRNL account.
+              Cloudflare Access has already verified the only approved account.
+              Recovery will replace the Google Authenticator secret for this workspace.
             </p>
 
             <div className="locked-email-card">
-              <span className="locked-email-icon">✉</span>
+              <span className="locked-email-icon">✓</span>
               <span>
-                <small>Recovery & account email</small>
+                <small>Verified account</small>
                 <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
               </span>
-              <b>ONLY ACCOUNT</b>
+              <b>ACCESS VERIFIED</b>
             </div>
 
             <label className="workspace-login-field">
@@ -268,64 +243,23 @@ function RecoveryAccess({
             <button
               type="button"
               className="primary big"
-              onClick={() => void sendCode()}
+              onClick={() => void startRecovery()}
               disabled={busy || workspaceId.trim().length !== 16}
             >
-              {busy ? 'Sending…' : 'Email recovery code'}
+              {busy ? 'Preparing recovery…' : 'Replace Google Authenticator'}
             </button>
 
             <p className="privacy-note">
-              NMRNL will not send recovery codes to any other email address.
+              No recovery email is sent by NMRNL. The Cloudflare Access login is the
+              email ownership check.
             </p>
           </div>
-        )}
-
-        {stage === 'email-code' && (
-          <form className="recovery-stack" onSubmit={verifyEmail}>
-            <p className="setup-lead">
-              Enter the 6-digit recovery code sent to <b>{NMRNL_ACCOUNT_EMAIL}</b>.
-              It expires after 10 minutes.
-            </p>
-
-            <label className="code-prompt">
-              <span>Email recovery code</span>
-              <input
-                className="totp-input login-code"
-                value={emailCode}
-                onChange={(event) =>
-                  setEmailCode(event.target.value.replace(/\D/g, '').slice(0, 6))
-                }
-                placeholder="000000"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                autoFocus
-              />
-            </label>
-
-            <button
-              className="primary big"
-              disabled={busy || emailCode.length !== 6}
-            >
-              {busy ? 'Checking…' : 'Verify recovery code'}
-            </button>
-
-            <button
-              type="button"
-              className="switch-workspace-button"
-              onClick={() => void sendCode()}
-              disabled={busy}
-            >
-              Send another code
-            </button>
-          </form>
-        )}
-
-        {stage === 'authenticator' && challenge && (
+        ) : (
           <form className="recovery-stack" onSubmit={confirmAuthenticator}>
             <p className="setup-lead">
-              Email ownership is confirmed. Scan this new QR in Google Authenticator.
-              Your previous Authenticator setup will stop working after this step.
+              Scan this replacement QR in Google Authenticator. Confirming the new
+              6-digit code invalidates the previous Authenticator secret and old NMRNL
+              sessions.
             </p>
 
             <div className="qr-shell">
@@ -384,9 +318,7 @@ function WorkspaceSetup({
   const [challenge, setChallenge] = useState<WorkspaceSetupChallenge | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [recovery, setRecovery] = useState(false);
-  const [createEmailStep, setCreateEmailStep] = useState(false);
-  const [createEmailCode, setCreateEmailCode] = useState('');
-  const [busy, setBusy] = useState<'create' | 'create-email' | 'verify' | 'login' | null>(null);
+  const [busy, setBusy] = useState<'create' | 'verify' | 'login' | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -417,43 +349,18 @@ function WorkspaceSetup({
     setCode(value.replace(/\D/g, '').slice(0, 6));
   };
 
-  const beginCreate = async () => {
-    setBusy('create-email');
-    setError('');
-    try {
-      await requestAccountAccessEmail();
-      setCreateEmailStep(true);
-      setCreateEmailCode('');
-    } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : 'Could not send the account verification email.',
-      );
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const create = async (event: FormEvent) => {
-    event.preventDefault();
-    if (createEmailCode.length !== 6) return;
-
+  const create = async () => {
     setBusy('create');
     setError('');
     try {
-      const verified = await verifyAccountAccessEmail(createEmailCode);
-      const nextChallenge = await createWorkspace(verified.creationToken);
+      const nextChallenge = await createWorkspace();
       rememberWorkspaceId(nextChallenge.workspaceId);
       setWorkspaceId(nextChallenge.workspaceId);
       setShowWorkspaceField(false);
-      setCreateEmailStep(false);
-      setCreateEmailCode('');
       setChallenge(nextChallenge);
       setCode('');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not create workspace.');
-      setCreateEmailCode('');
     } finally {
       setBusy(null);
     }
@@ -509,86 +416,6 @@ function WorkspaceSetup({
     );
   }
 
-  if (createEmailStep) {
-    return (
-      <main className="setup-shell">
-        <section className="setup-card code-login-card">
-          <button
-            type="button"
-            className="recovery-back"
-            onClick={() => {
-              setCreateEmailStep(false);
-              setCreateEmailCode('');
-              setError('');
-            }}
-          >
-            ← Back
-          </button>
-
-          <div className="code-login-brand">
-            <div className="brand-mark">N</div>
-            <div>
-              <div className="eyebrow">VERIFY NMRNL ACCOUNT</div>
-              <h1>Check your email</h1>
-            </div>
-          </div>
-
-          <p className="setup-lead">
-            Workspace creation is restricted to the one approved account. Enter the
-            6-digit code sent to <b>{NMRNL_ACCOUNT_EMAIL}</b>.
-          </p>
-
-          <div className="locked-email-card setup-account">
-            <span className="locked-email-icon">✉</span>
-            <span>
-              <small>Only approved account</small>
-              <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
-            </span>
-            <b>ONLY</b>
-          </div>
-
-          {error && <div className="error-banner">{error}</div>}
-
-          <form className="code-login-form" onSubmit={create}>
-            <label className="code-prompt">
-              <span>Email access code</span>
-              <input
-                className="totp-input login-code"
-                value={createEmailCode}
-                onChange={(event) =>
-                  setCreateEmailCode(
-                    event.target.value.replace(/\D/g, '').slice(0, 6),
-                  )
-                }
-                placeholder="000000"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                autoFocus
-              />
-            </label>
-
-            <button
-              className="primary big"
-              disabled={busy !== null || createEmailCode.length !== 6}
-            >
-              {busy === 'create' ? 'Creating workspace…' : 'Verify email & continue'}
-            </button>
-          </form>
-
-          <button
-            type="button"
-            className="switch-workspace-button"
-            onClick={() => void beginCreate()}
-            disabled={busy !== null}
-          >
-            Send another code
-          </button>
-        </section>
-      </main>
-    );
-  }
-
   if (challenge) {
     return (
       <main className="setup-shell">
@@ -599,19 +426,19 @@ function WorkspaceSetup({
               <div className="eyebrow">GOOGLE AUTHENTICATOR SETUP</div>
               <h1>Scan to secure NMRNL</h1>
               <p className="setup-lead">
-                Open Google Authenticator, tap <b>+</b>, choose <b>Scan a QR code</b>,
-                then enter the 6-digit code it generates.
+                Your Cloudflare email login has been verified. Scan this QR in Google
+                Authenticator, then enter the generated 6-digit code.
               </p>
             </div>
           </div>
 
           <div className="locked-email-card setup-account">
-            <span className="locked-email-icon">✉</span>
+            <span className="locked-email-icon">✓</span>
             <span>
-              <small>Only approved account</small>
+              <small>Cloudflare Access account</small>
               <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
             </span>
-            <b>LOCKED</b>
+            <b>VERIFIED</b>
           </div>
 
           {error && <div className="error-banner">{error}</div>}
@@ -677,14 +504,14 @@ function WorkspaceSetup({
         </div>
 
         <div className="account-access-line">
-          <span>Account</span>
+          <span>Cloudflare verified</span>
           <strong>{NMRNL_ACCOUNT_EMAIL}</strong>
           <b>ONLY</b>
         </div>
 
         <p className="setup-lead code-login-lead">
           {hasRememberedWorkspace
-            ? 'Open Google Authenticator and enter the current 6-digit NMRNL code.'
+            ? 'Cloudflare has verified your email. Enter the current 6-digit NMRNL code from Google Authenticator.'
             : 'Enter your Workspace ID once, then use the current 6-digit code from Google Authenticator.'}
         </p>
 
@@ -748,10 +575,10 @@ function WorkspaceSetup({
             setError('');
           }}
         >
-          <span>✉</span>
+          <span>↻</span>
           <span>
-            <strong>Can’t access Google Authenticator?</strong>
-            <small>Recover with {NMRNL_ACCOUNT_EMAIL}</small>
+            <strong>Lost Google Authenticator?</strong>
+            <small>Reset it using your Cloudflare-verified email identity</small>
           </span>
         </button>
 
@@ -774,10 +601,10 @@ function WorkspaceSetup({
         <button
           className="secondary big create-secondary"
           type="button"
-          onClick={() => void beginCreate()}
+          onClick={() => void create()}
           disabled={busy !== null}
         >
-          {busy === 'create-email' ? 'Sending email…' : 'Create private workspace'}
+          {busy === 'create' ? 'Creating…' : 'Create private workspace'}
         </button>
       </section>
     </main>
@@ -1721,8 +1548,8 @@ function WorkspaceScreen({
           <b>{state.recoveryEmailEnabled ? 'RECOVERY ON' : 'LOCKED'}</b>
         </div>
         <p className="panel-footnote">
-          Authenticator recovery codes can only be sent to this address. There is no
-          option to add a second account or change the recovery destination in NMRNL.
+          Cloudflare Access verifies this exact account before NMRNL loads. There is
+          no in-app email sender and no option to add a second account.
         </p>
       </Panel>
 
