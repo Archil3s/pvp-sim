@@ -2131,7 +2131,7 @@ export function App() {
   const [state, setState] = useState<WorkspaceState | null>(null);
   const [mode, setMode] = useState<Mode>('work');
   const [section, setSection] = useState<Section>('home');
-  const [loading, setLoading] = useState(
+  const [loading, setLoading] = useState<boolean>(
     Boolean(credentials) || TEMPORARY_LOGIN_BYPASS,
   );
   const [error, setError] = useState('');
