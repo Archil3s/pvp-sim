@@ -28,13 +28,19 @@ import {
   confirmRecoveryAuthenticator,
   setEntryCalendarEntered,
   setGeneralActionCompleted,
+  updateInvoiceStatus,
+  updateWorkSettings,
   setVisitActionCompleted,
   updateEntry,
   updateSupportNote,
 } from './api';
 import {
   ENTRY_TYPES,
+  entryBillableHours,
+  entryBillableMinutes,
+  entryEarnings,
   entryKilometres,
+  entryTravelReimbursement,
   entryType,
   entryTypesForMode,
   formatDate,
@@ -45,6 +51,7 @@ import {
   type EntryDraft,
   type EntryTypeKey,
   type GeneralAction,
+  type InvoiceStatus,
   type Mode,
   type Section,
   type SupportNoteStatus,
@@ -1762,53 +1769,394 @@ function CalendarScreen({
   );
 }
 
-function fortnightStartFor(date: Date): Date {
-  const anchor = new Date('2025-12-14T12:00:00');
-  const dayMs = 86_400_000;
-  const diff = Math.floor((date.getTime() - anchor.getTime()) / dayMs);
-  const offset = ((diff % 14) + 14) % 14;
-  const start = new Date(date);
-  start.setDate(date.getDate() - offset);
-  start.setHours(12, 0, 0, 0);
-  return start;
+const INVOICE_PERIOD_DAYS = 14;
+const FIRST_INVOICE_NUMBER = 5;
+
+function addCalendarDays(date: Date, days: number): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days, 12);
 }
 
-function PayPeriodScreen({ state }: { state: WorkspaceState }) {
-  const [offset, setOffset] = useState(0);
-  const baseStart = fortnightStartFor(new Date());
-  const start = new Date(baseStart);
-  start.setDate(baseStart.getDate() + offset * 14);
-  const end = new Date(start);
-  end.setDate(start.getDate() + 13);
-  const startKey = localDateValue(start);
-  const endKey = localDateValue(end);
+function calendarDaysBetween(start: Date, end: Date): number {
+  const startUtc = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const endUtc = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.round((endUtc - startUtc) / 86_400_000);
+}
 
-  const entries = state.entries
-    .filter((entry) => entry.mode === 'work')
-    .filter((entry) => entry.date >= startKey && entry.date <= endKey)
-    .sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
+function floorDivide(value: number, divisor: number): number {
+  return Math.floor(value / divisor);
+}
 
-  const totalMinutes = entries.reduce((sum, entry) => sum + entry.minutes, 0);
-  const totalKm = entries.reduce((sum, entry) => sum + entryKilometres(entry), 0);
-  const clients = new Set(entries.map((entry) => entry.client)).size;
-  const missingNotes = entries.filter((entry) => !hasSupportNoteContent(entry.supportNoteBreakdown)).length;
-  const openActions = entries.reduce(
-    (sum, entry) => sum + entry.nextActions.filter((action) => !action.completedAt).length,
+function fortnightStartFor(date: Date, anchorDate: string): Date {
+  const anchor = new Date(anchorDate + 'T12:00:00');
+  const normalized = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
+  const daysSinceAnchor = calendarDaysBetween(anchor, normalized);
+  const offset = floorDivide(daysSinceAnchor, INVOICE_PERIOD_DAYS);
+  return addCalendarDays(anchor, offset * INVOICE_PERIOD_DAYS);
+}
+
+function invoiceKey(start: Date, end: Date): string {
+  return localDateValue(start) + '_' + localDateValue(end);
+}
+
+function money(value: number): string {
+  return new Intl.NumberFormat('en-NZ', {
+    style: 'currency',
+    currency: 'NZD',
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
+function invoiceStatusLabel(status: InvoiceStatus): string {
+  if (status === 'submitted') return 'Submitted';
+  if (status === 'paid') return 'Paid';
+  return 'Not Submitted';
+}
+
+function invoiceNumberForStart(start: Date, anchorDate: string): number {
+  const anchorRangeStart = fortnightStartFor(
+    new Date(anchorDate + 'T12:00:00'),
+    anchorDate,
+  );
+  return (
+    FIRST_INVOICE_NUMBER +
+    floorDivide(
+      calendarDaysBetween(anchorRangeStart, start),
+      INVOICE_PERIOD_DAYS,
+    )
+  );
+}
+
+function invoiceTotals(
+  entries: WorkEntry[],
+  hourlyRate: number,
+  fuelRate: number,
+) {
+  const billableMinutes = entries.reduce(
+    (sum, entry) => sum + entryBillableMinutes(entry),
     0,
   );
+  const kilometres = entries.reduce(
+    (sum, entry) => sum + entryKilometres(entry),
+    0,
+  );
+  const earnings = entries.reduce(
+    (sum, entry) => sum + entryEarnings(entry, hourlyRate),
+    0,
+  );
+  const travel = entries.reduce(
+    (sum, entry) => sum + entryTravelReimbursement(entry, fuelRate),
+    0,
+  );
+
+  return {
+    billableMinutes,
+    kilometres,
+    earnings,
+    travel,
+    total: earnings + travel,
+  };
+}
+
+function openInvoicePrintView({
+  invoiceNumber,
+  startKey,
+  endKey,
+  entries,
+  hourlyRate,
+  fuelRate,
+}: {
+  invoiceNumber: number;
+  startKey: string;
+  endKey: string;
+  entries: WorkEntry[];
+  hourlyRate: number;
+  fuelRate: number;
+}) {
+  const totals = invoiceTotals(entries, hourlyRate, fuelRate);
+  const escapeHtml = (value: string) =>
+    value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+  const rows = entries
+    .map(
+      (entry) =>
+        '<tr>' +
+        '<td>' + escapeHtml(formatDate(entry.date)) + '</td>' +
+        '<td>' + escapeHtml(entry.client) + '</td>' +
+        '<td>' + escapeHtml(entryType(entry.type).label) + '</td>' +
+        '<td>' + entryBillableHours(entry).toFixed(2) + '</td>' +
+        '<td>' + entryKilometres(entry).toFixed(1) + '</td>' +
+        '<td>' + money(
+          entryEarnings(entry, hourlyRate) +
+            entryTravelReimbursement(entry, fuelRate),
+        ) + '</td>' +
+        '</tr>',
+    )
+    .join('');
+
+  const invoiceWindow = window.open('', '_blank');
+  if (!invoiceWindow) return false;
+
+  invoiceWindow.document.write(
+    '<!doctype html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Invoice ' + invoiceNumber + '</title>' +
+    '<style>' +
+    'body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;margin:32px;color:#111}' +
+    'h1{margin:0 0 4px}.muted{color:#666}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:24px 0}' +
+    '.box{border:1px solid #bbb;padding:12px}.box b{display:block;font-size:20px;margin-top:4px}' +
+    'table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #bbb;padding:7px;text-align:left}' +
+    '.total{margin-top:20px;text-align:right;font-size:22px;font-weight:800}' +
+    '.note{margin-top:14px;color:#666;font-size:11px}@media print{button{display:none}body{margin:12mm}}' +
+    '</style></head><body>' +
+    '<h1>NMRNL Work Invoice ' + invoiceNumber + '</h1>' +
+    '<div class="muted">' + escapeHtml(formatDate(startKey)) + ' – ' + escapeHtml(formatDate(endKey)) + '</div>' +
+    '<div class="summary">' +
+    '<div class="box">Billable hours<b>' + (totals.billableMinutes / 60).toFixed(2) + '</b>@ ' + money(hourlyRate) + '/hr</div>' +
+    '<div class="box">Travel<b>' + totals.kilometres.toFixed(1) + ' km</b>@ ' + money(fuelRate) + '/km</div>' +
+    '<div class="box">Invoice total<b>' + money(totals.total) + '</b></div>' +
+    '</div>' +
+    '<table><thead><tr><th>Date</th><th>Client</th><th>Work</th><th>Billable hrs</th><th>KM</th><th>Amount</th></tr></thead><tbody>' +
+    rows +
+    '</tbody></table>' +
+    '<div class="total">Total: ' + money(totals.total) + '</div>' +
+    '<div class="note">NMRNL Work invoice. Use the browser Share/Print menu to save or send as PDF.</div>' +
+    '<script>setTimeout(function(){window.print()},350)<\/script>' +
+    '</body></html>',
+  );
+  invoiceWindow.document.close();
+  return true;
+}
+
+function PayPeriodScreen({
+  state,
+  credentials,
+  onState,
+}: {
+  state: WorkspaceState;
+  credentials: WorkspaceCredentials;
+  onState: (state: WorkspaceState) => void;
+}) {
+  const [offset, setOffset] = useState(0);
+  const [moneyView, setMoneyView] = useState<'total' | 'owed'>('total');
+  const [rateEditing, setRateEditing] = useState(false);
+  const [hourlyRate, setHourlyRate] = useState(String(state.settings.hourlyRate));
+  const [fuelRate, setFuelRate] = useState(String(state.settings.fuelRate));
+  const [anchorDate, setAnchorDate] = useState(state.settings.payPeriodAnchorDate);
+  const [busy, setBusy] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setHourlyRate(String(state.settings.hourlyRate));
+    setFuelRate(String(state.settings.fuelRate));
+    setAnchorDate(state.settings.payPeriodAnchorDate);
+  }, [state.settings]);
+
+  const baseStart = fortnightStartFor(new Date(), state.settings.payPeriodAnchorDate);
+  const start = addCalendarDays(baseStart, offset * INVOICE_PERIOD_DAYS);
+  const end = addCalendarDays(start, INVOICE_PERIOD_DAYS - 1);
+  const startKey = localDateValue(start);
+  const endKey = localDateValue(end);
+  const selectedInvoiceKey = invoiceKey(start, end);
+  const selectedStatus =
+    state.invoiceStatuses[selectedInvoiceKey] || 'notSubmitted';
+  const invoiceNumber = invoiceNumberForStart(
+    start,
+    state.settings.payPeriodAnchorDate,
+  );
+
+  const workEntries = state.entries
+    .filter((entry) => entry.mode === 'work')
+    .sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
+  const entries = workEntries.filter(
+    (entry) => entry.date >= startKey && entry.date <= endKey,
+  );
+
+  const totals = invoiceTotals(
+    entries,
+    state.settings.hourlyRate,
+    state.settings.fuelRate,
+  );
+  const clients = new Set(entries.map((entry) => entry.client)).size;
+  const missingNotes = entries.filter(
+    (entry) => !hasSupportNoteContent(entry.supportNoteBreakdown),
+  ).length;
+  const openActions = entries.reduce(
+    (sum, entry) =>
+      sum + entry.nextActions.filter((action) => !action.completedAt).length,
+    0,
+  );
+
+  const rows = useMemo(() => {
+    const anchor = new Date(state.settings.payPeriodAnchorDate + 'T12:00:00');
+    const currentStart = fortnightStartFor(
+      new Date(),
+      state.settings.payPeriodAnchorDate,
+    );
+    let firstStart = anchor;
+
+    if (workEntries.length) {
+      const earliest = fortnightStartFor(
+        new Date(workEntries[0].date + 'T12:00:00'),
+        state.settings.payPeriodAnchorDate,
+      );
+      if (earliest < firstStart) firstStart = earliest;
+    }
+
+    const latestEntry = workEntries.length
+      ? fortnightStartFor(
+          new Date(workEntries[workEntries.length - 1].date + 'T12:00:00'),
+          state.settings.payPeriodAnchorDate,
+        )
+      : currentStart;
+    const lastStart =
+      latestEntry > currentStart
+        ? addCalendarDays(latestEntry, INVOICE_PERIOD_DAYS * 2)
+        : addCalendarDays(currentStart, INVOICE_PERIOD_DAYS * 2);
+
+    const result: Array<{
+      start: Date;
+      end: Date;
+      startKey: string;
+      endKey: string;
+      key: string;
+      invoiceNumber: number;
+      entries: WorkEntry[];
+      status: InvoiceStatus;
+      totals: ReturnType<typeof invoiceTotals>;
+    }> = [];
+
+    for (
+      let cursor = firstStart;
+      cursor <= lastStart;
+      cursor = addCalendarDays(cursor, INVOICE_PERIOD_DAYS)
+    ) {
+      const cursorEnd = addCalendarDays(cursor, INVOICE_PERIOD_DAYS - 1);
+      const cursorStartKey = localDateValue(cursor);
+      const cursorEndKey = localDateValue(cursorEnd);
+      const key = invoiceKey(cursor, cursorEnd);
+      const periodEntries = workEntries.filter(
+        (entry) =>
+          entry.date >= cursorStartKey && entry.date <= cursorEndKey,
+      );
+
+      result.push({
+        start: cursor,
+        end: cursorEnd,
+        startKey: cursorStartKey,
+        endKey: cursorEndKey,
+        key,
+        invoiceNumber: invoiceNumberForStart(
+          cursor,
+          state.settings.payPeriodAnchorDate,
+        ),
+        entries: periodEntries,
+        status: state.invoiceStatuses[key] || 'notSubmitted',
+        totals: invoiceTotals(
+          periodEntries,
+          state.settings.hourlyRate,
+          state.settings.fuelRate,
+        ),
+      });
+    }
+
+    return result.reverse();
+  }, [
+    workEntries,
+    state.invoiceStatuses,
+    state.settings.hourlyRate,
+    state.settings.fuelRate,
+    state.settings.payPeriodAnchorDate,
+  ]);
+
+  const totalMoney = rows.reduce((sum, row) => sum + row.totals.total, 0);
+  const owedMoney = rows
+    .filter((row) => row.status === 'submitted')
+    .reduce((sum, row) => sum + row.totals.total, 0);
+  const paidMoney = rows
+    .filter((row) => row.status === 'paid')
+    .reduce((sum, row) => sum + row.totals.total, 0);
 
   const byDay = entries.reduce<Record<string, WorkEntry[]>>((groups, entry) => {
     (groups[entry.date] ||= []).push(entry);
     return groups;
   }, {});
 
+  const saveRates = async () => {
+    const parsedHourly = Number(hourlyRate);
+    const parsedFuel = Number(fuelRate);
+    if (!Number.isFinite(parsedHourly) || parsedHourly < 0) {
+      setError('Hourly rate must be a valid number.');
+      return;
+    }
+    if (!Number.isFinite(parsedFuel) || parsedFuel < 0) {
+      setError('KM rate must be a valid number.');
+      return;
+    }
+
+    setBusy('settings');
+    setError('');
+    setMessage('');
+    try {
+      onState(
+        await updateWorkSettings(credentials, {
+          hourlyRate: parsedHourly,
+          fuelRate: parsedFuel,
+          payPeriodAnchorDate: anchorDate,
+        }),
+      );
+      setRateEditing(false);
+      setMessage('Work invoice rates saved.');
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : 'Could not save Work rates.',
+      );
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const setStatus = async (status: InvoiceStatus) => {
+    setBusy('status');
+    setError('');
+    setMessage('');
+    try {
+      onState(
+        await updateInvoiceStatus(
+          credentials,
+          selectedInvoiceKey,
+          status,
+          totals.total,
+        ),
+      );
+      setMessage('Invoice ' + invoiceNumber + ' marked ' + invoiceStatusLabel(status) + '.');
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Could not update invoice status.',
+      );
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const baseline = state.invoiceBaselines[selectedInvoiceKey];
+  const delta =
+    baseline == null || selectedStatus === 'notSubmitted'
+      ? null
+      : totals.total - baseline;
+
   return (
     <div className="page-stack">
       <section className="page-title">
         <div>
-          <div className="eyebrow">WORK TOTALS</div>
+          <div className="eyebrow">WORK INVOICES</div>
           <h2>Pay Period</h2>
-          <p>Fortnight totals and daily work breakdown.</p>
+          <p>Two-week billable hours, earnings, travel and invoice tracking.</p>
         </div>
         <div className="period-controls">
           <button className="secondary compact" onClick={() => setOffset((value) => value - 1)}>← Previous</button>
@@ -1817,36 +2165,217 @@ function PayPeriodScreen({ state }: { state: WorkspaceState }) {
         </div>
       </section>
 
-      <Panel title={`${formatDate(startKey)} – ${formatDate(endKey)}`} subtitle="Two-week work period">
-        <div className="stat-grid compact-stats">
+      {error && <div className="error-banner">{error}</div>}
+      {message && <div className="success-banner">{message}</div>}
+
+      <Panel
+        title={'Invoice ' + invoiceNumber}
+        subtitle={formatDate(startKey) + ' – ' + formatDate(endKey)}
+        action={
+          <button
+            type="button"
+            className="secondary compact"
+            onClick={() => setRateEditing((value) => !value)}
+          >
+            {rateEditing ? 'Close rates' : 'Rates'}
+          </button>
+        }
+      >
+        {rateEditing && (
+          <div className="invoice-rate-editor">
+            <label className="field">
+              <span>Hourly rate</span>
+              <input
+                inputMode="decimal"
+                value={hourlyRate}
+                onChange={(event) => setHourlyRate(event.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span>Travel rate / KM</span>
+              <input
+                inputMode="decimal"
+                value={fuelRate}
+                onChange={(event) => setFuelRate(event.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span>2-week anchor date</span>
+              <input
+                type="date"
+                value={anchorDate}
+                onChange={(event) => setAnchorDate(event.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="primary compact"
+              disabled={busy === 'settings'}
+              onClick={() => void saveRates()}
+            >
+              {busy === 'settings' ? 'Saving…' : 'Save rates'}
+            </button>
+          </div>
+        )}
+
+        <div className="invoice-status-row">
+          <div>
+            <span>Invoice status</span>
+            <strong className={'invoice-status-pill status-' + selectedStatus}>
+              {invoiceStatusLabel(selectedStatus)}
+            </strong>
+          </div>
+          <div className="invoice-status-buttons">
+            {(['notSubmitted', 'submitted', 'paid'] as InvoiceStatus[]).map((status) => (
+              <button
+                type="button"
+                key={status}
+                className={
+                  'invoice-status-button status-' +
+                  status +
+                  (selectedStatus === status ? ' active' : '')
+                }
+                disabled={busy === 'status'}
+                onClick={() => void setStatus(status)}
+              >
+                {invoiceStatusLabel(status)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {baseline != null && selectedStatus !== 'notSubmitted' && (
+          <div className="invoice-baseline">
+            Marked {invoiceStatusLabel(selectedStatus).toLowerCase()} at {money(baseline)}
+            {delta != null && Math.abs(delta) >= 0.01 && (
+              <strong>
+                Current change: {delta >= 0 ? '+' : '−'}{money(Math.abs(delta))}
+              </strong>
+            )}
+          </div>
+        )}
+
+        <div className="stat-grid compact-stats invoice-stats">
           <StatCard label="Entries" value={String(entries.length)} />
-          <StatCard label="Hours" value={formatHours(totalMinutes)} />
-          <StatCard label="KM" value={totalKm.toFixed(1)} />
+          <StatCard label="Billable hours" value={(totals.billableMinutes / 60).toFixed(2)} detail="Includes note allowance" />
+          <StatCard label="Earnings" value={money(totals.earnings)} detail={money(state.settings.hourlyRate) + '/hr'} />
+          <StatCard label="KM" value={totals.kilometres.toFixed(1)} />
+          <StatCard label="Travel $" value={money(totals.travel)} detail={money(state.settings.fuelRate) + '/km'} />
+          <StatCard label="Invoice total" value={money(totals.total)} />
           <StatCard label="Clients" value={String(clients)} />
           <StatCard label="Missing notes" value={String(missingNotes)} />
           <StatCard label="Open actions" value={String(openActions)} />
+        </div>
+
+        <div className="invoice-actions">
+          <button
+            type="button"
+            className="primary"
+            disabled={!entries.length}
+            onClick={() => {
+              const opened = openInvoicePrintView({
+                invoiceNumber,
+                startKey,
+                endKey,
+                entries,
+                hourlyRate: state.settings.hourlyRate,
+                fuelRate: state.settings.fuelRate,
+              });
+              if (!opened) {
+                setError('Invoice window was blocked. Allow pop-ups for NMRNL and try again.');
+              }
+            }}
+          >
+            Build Invoice / PDF
+          </button>
+        </div>
+      </Panel>
+
+      <Panel title="Invoice Money">
+        <div className="invoice-money-tabs">
+          <button
+            className={moneyView === 'total' ? 'active' : ''}
+            onClick={() => setMoneyView('total')}
+          >
+            Total Money
+          </button>
+          <button
+            className={moneyView === 'owed' ? 'active' : ''}
+            onClick={() => setMoneyView('owed')}
+          >
+            Money Owed
+          </button>
+        </div>
+        <div className="invoice-money-value">
+          {money(moneyView === 'total' ? totalMoney : owedMoney)}
+        </div>
+        <div className="invoice-money-chips">
+          <span>Total {money(totalMoney)}</span>
+          <span>Owed {money(owedMoney)}</span>
+          <span>Paid {money(paidMoney)}</span>
+        </div>
+      </Panel>
+
+      <Panel title={moneyView === 'owed' ? 'Submitted invoices still owed' : '2-week invoice periods'}>
+        <div className="invoice-period-list">
+          {rows
+            .filter((row) => moneyView !== 'owed' || row.status === 'submitted')
+            .map((row) => (
+              <button
+                type="button"
+                key={row.key}
+                className={'invoice-period-card ' + (row.key === selectedInvoiceKey ? 'selected' : '')}
+                onClick={() => {
+                  const diffDays = calendarDaysBetween(baseStart, row.start);
+                  setOffset(floorDivide(diffDays, INVOICE_PERIOD_DAYS));
+                }}
+              >
+                <span className="invoice-number">#{row.invoiceNumber}</span>
+                <span className="invoice-period-main">
+                  <strong>{formatDate(row.startKey)} – {formatDate(row.endKey)}</strong>
+                  <small>
+                    {row.entries.length} entries · {(row.totals.billableMinutes / 60).toFixed(2)} hrs · {row.totals.kilometres.toFixed(1)} km
+                  </small>
+                </span>
+                <span className="invoice-period-money">
+                  <strong>{money(row.totals.total)}</strong>
+                  <small className={'status-' + row.status}>{invoiceStatusLabel(row.status)}</small>
+                </span>
+              </button>
+            ))}
         </div>
       </Panel>
 
       <Panel title="Daily breakdown">
         {entries.length === 0 ? (
-          <EmptyState title="No work recorded" detail="This fortnight has no Work mode entries." />
+          <EmptyState title="No work recorded" detail="This invoice period has no Work entries." />
         ) : (
           <div className="pay-period-days">
             {Object.entries(byDay).map(([day, dayEntries]) => {
-              const minutes = dayEntries.reduce((sum, entry) => sum + entry.minutes, 0);
-              const km = dayEntries.reduce((sum, entry) => sum + entryKilometres(entry), 0);
+              const dayTotals = invoiceTotals(
+                dayEntries,
+                state.settings.hourlyRate,
+                state.settings.fuelRate,
+              );
               return (
                 <div className="pay-period-day" key={day}>
                   <div className="pay-period-day-head">
                     <strong>{formatDate(day)}</strong>
-                    <span>{formatHours(minutes)} h · {km.toFixed(1)} km · {dayEntries.length} entries</span>
+                    <span>
+                      {(dayTotals.billableMinutes / 60).toFixed(2)} h · {dayTotals.kilometres.toFixed(1)} km · {money(dayTotals.earnings + dayTotals.travel)}
+                    </span>
                   </div>
                   {dayEntries.map((entry) => (
-                    <div className="pay-period-entry" key={entry.id}>
+                    <div className="pay-period-entry invoice-entry-row" key={entry.id}>
                       <span>{entry.startTime}</span>
                       <strong>{entry.client}</strong>
-                      <small>{entryType(entry.type).shortLabel} · {entry.minutes}m</small>
+                      <small>
+                        {entryType(entry.type).shortLabel} · {entry.minutes}m visit · {entryBillableMinutes(entry)}m billable
+                      </small>
+                      <b>{money(
+                        entryEarnings(entry, state.settings.hourlyRate) +
+                          entryTravelReimbursement(entry, state.settings.fuelRate),
+                      )}</b>
                     </div>
                   ))}
                 </div>
@@ -2753,7 +3282,13 @@ export function App() {
               onState={setState}
             />
           )}
-          {section === 'payPeriod' && <PayPeriodScreen state={state} />}
+          {section === 'payPeriod' && (
+            <PayPeriodScreen
+              state={state}
+              credentials={credentials}
+              onState={setState}
+            />
+          )}
           {section === 'actions' && (
             <ActionsScreen
               state={state}

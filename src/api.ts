@@ -1,6 +1,7 @@
 import type {
   EntryDraft,
   GeneralAction,
+  InvoiceStatus,
   Mode,
   SupportNoteStatus,
   EmailRecoveryChallenge,
@@ -353,6 +354,40 @@ export function setEntryCalendarEntered(
     {
       method: 'PATCH',
       body: JSON.stringify({ entered }),
+    },
+  ).then((payload) => payload.state);
+}
+
+export function updateWorkSettings(
+  credentials: WorkspaceCredentials,
+  input: {
+    hourlyRate: number;
+    fuelRate: number;
+    payPeriodAnchorDate: string;
+  },
+): Promise<WorkspaceState> {
+  return workspaceRequest<{ state: WorkspaceState }>(
+    credentials,
+    '/settings/work',
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    },
+  ).then((payload) => payload.state);
+}
+
+export function updateInvoiceStatus(
+  credentials: WorkspaceCredentials,
+  invoiceKey: string,
+  status: InvoiceStatus,
+  currentTotal: number,
+): Promise<WorkspaceState> {
+  return workspaceRequest<{ state: WorkspaceState }>(
+    credentials,
+    '/invoices/' + encodeURIComponent(invoiceKey) + '/status',
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ status, currentTotal }),
     },
   ).then((payload) => payload.state);
 }

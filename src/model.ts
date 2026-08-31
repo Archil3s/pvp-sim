@@ -26,6 +26,14 @@ export type SupportNoteStatus =
   | 'finished'
   | 'submitted';
 
+export type InvoiceStatus = 'notSubmitted' | 'submitted' | 'paid';
+
+export interface WorkSettings {
+  hourlyRate: number;
+  fuelRate: number;
+  payPeriodAnchorDate: string;
+}
+
 export interface EntryTypeDefinition {
   key: EntryTypeKey;
   label: string;
@@ -170,6 +178,9 @@ export interface WorkspaceState {
   clients: Client[];
   entries: WorkEntry[];
   actions: GeneralAction[];
+  settings: WorkSettings;
+  invoiceStatuses: Record<string, InvoiceStatus>;
+  invoiceBaselines: Record<string, number>;
 }
 
 export interface WorkspaceCredentials {
@@ -230,6 +241,30 @@ export function entryKilometres(entry: WorkEntry): number {
   if (entry.type !== 'homeVisit') return 0;
   if (entry.odometerStart == null || entry.odometerEnd == null) return 0;
   return Math.max(0, entry.odometerEnd - entry.odometerStart);
+}
+
+export function noteAllowanceMinutes(baseMinutes: number): number {
+  const safe = Math.max(0, Math.min(1440, Math.round(baseMinutes || 0)));
+  if (safe >= 60) return 30;
+  if (safe > 30) return 15;
+  return 0;
+}
+
+export function entryBillableMinutes(entry: WorkEntry): number {
+  const base = Math.max(0, Math.min(1440, Math.round(entry.minutes || 0)));
+  return base + noteAllowanceMinutes(base);
+}
+
+export function entryBillableHours(entry: WorkEntry): number {
+  return entryBillableMinutes(entry) / 60;
+}
+
+export function entryEarnings(entry: WorkEntry, hourlyRate: number): number {
+  return entryBillableHours(entry) * Math.max(0, hourlyRate || 0);
+}
+
+export function entryTravelReimbursement(entry: WorkEntry, fuelRate: number): number {
+  return entryKilometres(entry) * Math.max(0, fuelRate || 0);
 }
 
 export function formatHours(minutes: number): string {

@@ -26,6 +26,10 @@ The pre-NMRNL state of this repository is preserved on:
 - Work calendar with overlap / missing-note / follow-up flags
 - Google Calendar draft export with per-entry calendar status and automatic reset when event details change
 - Work pay-period fortnight totals and daily breakdown
+- Billable-time rules with 15/30-minute note allowances
+- Work earnings + travel reimbursement using editable hourly/KM rates
+- Invoice numbering, Not Submitted / Submitted / Paid tracking, owed/paid totals and baseline-change tracking
+- Mobile printable invoice/PDF view
 - Mobile + desktop navigation
 
 ## Temporary build access
@@ -102,6 +106,5 @@ After the Worker is renamed to `nmrnl` in the Cloudflare dashboard, update the W
 
 ## Next port slices
 
-- Pay-period earnings / invoice workflow
 - Google Drive / Calendar
 - Admin review and charts

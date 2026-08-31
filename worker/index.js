@@ -21,6 +21,12 @@ const SUPPORT_NOTE_STATUSES = new Set([
   'finished',
   'submitted',
 ]);
+const INVOICE_STATUSES = new Set(['notSubmitted', 'submitted', 'paid']);
+const DEFAULT_WORK_SETTINGS = {
+  hourlyRate: 43,
+  fuelRate: 1.17,
+  payPeriodAnchorDate: '2025-12-14',
+};
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const RATE_WINDOW_MS = 5 * 60 * 1000;
@@ -156,20 +162,57 @@ function modeValue(value) {
 
 function cloneDefaultData() {
   return {
-    version: 1,
+    version: 2,
     clients: [],
     entries: [],
     actions: [],
+    settings: { ...DEFAULT_WORK_SETTINGS },
+    invoiceStatuses: {},
+    invoiceBaselines: {},
   };
 }
 
 function normaliseData(value) {
   if (!value || typeof value !== 'object') return cloneDefaultData();
+
+  const rawSettings =
+    value.settings && typeof value.settings === 'object' ? value.settings : {};
+  const hourlyRate = numberValue(rawSettings.hourlyRate);
+  const fuelRate = numberValue(rawSettings.fuelRate);
+  const anchor = stringValue(rawSettings.payPeriodAnchorDate);
+  const invoiceStatuses =
+    value.invoiceStatuses &&
+    typeof value.invoiceStatuses === 'object' &&
+    !Array.isArray(value.invoiceStatuses)
+      ? value.invoiceStatuses
+      : {};
+  const invoiceBaselines =
+    value.invoiceBaselines &&
+    typeof value.invoiceBaselines === 'object' &&
+    !Array.isArray(value.invoiceBaselines)
+      ? value.invoiceBaselines
+      : {};
+
   return {
-    version: 1,
+    version: 2,
     clients: Array.isArray(value.clients) ? value.clients : [],
     entries: Array.isArray(value.entries) ? value.entries : [],
     actions: Array.isArray(value.actions) ? value.actions : [],
+    settings: {
+      hourlyRate:
+        hourlyRate != null && hourlyRate >= 0
+          ? hourlyRate
+          : DEFAULT_WORK_SETTINGS.hourlyRate,
+      fuelRate:
+        fuelRate != null && fuelRate >= 0
+          ? fuelRate
+          : DEFAULT_WORK_SETTINGS.fuelRate,
+      payPeriodAnchorDate: /^\d{4}-\d{2}-\d{2}$/.test(anchor)
+        ? anchor
+        : DEFAULT_WORK_SETTINGS.payPeriodAnchorDate,
+    },
+    invoiceStatuses,
+    invoiceBaselines,
   };
 }
 
@@ -339,6 +382,9 @@ export class SupervisorHub {
       clients: resolvedData.clients,
       entries: resolvedData.entries,
       actions: resolvedData.actions,
+      settings: resolvedData.settings,
+      invoiceStatuses: resolvedData.invoiceStatuses,
+      invoiceBaselines: resolvedData.invoiceBaselines,
     };
   }
 
@@ -943,6 +989,60 @@ export class SupervisorHub {
     return json({ state: await this.snapshot(null, data) });
   }
 
+  async updateWorkSettings(request) {
+    const body = await readObject(request);
+    const data = await this.getData();
+    const hourlyRate = numberValue(body.hourlyRate);
+    const fuelRate = numberValue(body.fuelRate);
+    const payPeriodAnchorDate = stringValue(body.payPeriodAnchorDate);
+
+    if (hourlyRate == null || hourlyRate < 0 || hourlyRate > 10000) {
+      return json({ error: 'Hourly rate must be a valid positive number.' }, { status: 400 });
+    }
+    if (fuelRate == null || fuelRate < 0 || fuelRate > 1000) {
+      return json({ error: 'KM rate must be a valid positive number.' }, { status: 400 });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(payPeriodAnchorDate)) {
+      return json({ error: 'Pay-period anchor date is invalid.' }, { status: 400 });
+    }
+
+    data.settings = {
+      hourlyRate,
+      fuelRate,
+      payPeriodAnchorDate,
+    };
+
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data) });
+  }
+
+  async updateInvoiceStatus(request, invoiceKey) {
+    const body = await readObject(request);
+    const data = await this.getData();
+    const status = stringValue(body.status);
+    const currentTotal = numberValue(body.currentTotal);
+
+    if (!INVOICE_STATUSES.has(status)) {
+      return json({ error: 'Unknown invoice status.' }, { status: 400 });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}$/.test(invoiceKey)) {
+      return json({ error: 'Invalid invoice period key.' }, { status: 400 });
+    }
+
+    if (status === 'notSubmitted') {
+      delete data.invoiceStatuses[invoiceKey];
+      delete data.invoiceBaselines[invoiceKey];
+    } else {
+      data.invoiceStatuses[invoiceKey] = status;
+      if (currentTotal != null && currentTotal >= 0) {
+        data.invoiceBaselines[invoiceKey] = currentTotal;
+      }
+    }
+
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data) });
+  }
+
   async createGeneralAction(request) {
     const body = await readObject(request);
     const title = stringValue(body.title);
@@ -1100,6 +1200,20 @@ export class SupervisorHub {
           request,
           decodeURIComponent(visitAction[1]),
           decodeURIComponent(visitAction[2]),
+        );
+      }
+
+      if (suffix === '/settings/work' && request.method === 'PATCH') {
+        return this.updateWorkSettings(request);
+      }
+
+      const invoiceStatusUpdate = suffix.match(
+        /^\/invoices\/([^/]+)\/status$/,
+      );
+      if (invoiceStatusUpdate && request.method === 'PATCH') {
+        return this.updateInvoiceStatus(
+          request,
+          decodeURIComponent(invoiceStatusUpdate[1]),
         );
       }
 

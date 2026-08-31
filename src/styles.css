@@ -2539,3 +2539,272 @@ button.danger-button {
     width: 100%;
   }
 }
+
+
+/* Work pay-period earnings and invoice workflow */
+
+.invoice-rate-editor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid #34405f;
+  border-radius: 14px;
+  background: #111824;
+}
+
+.invoice-status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.invoice-status-row > div:first-child {
+  display: grid;
+  gap: 6px;
+  color: #8396c7;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.invoice-status-pill {
+  width: fit-content;
+  border: 1px solid #34405f;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 11px;
+}
+
+.invoice-status-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.invoice-status-button {
+  min-height: 34px;
+  border: 1px solid #34405f;
+  border-radius: 999px;
+  background: transparent;
+  color: #8396c7;
+  padding: 0 10px;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.status-notSubmitted {
+  color: #9aabd0;
+}
+
+.status-submitted {
+  color: #ffd36b;
+}
+
+.status-paid {
+  color: #65efa7;
+}
+
+.invoice-status-button.status-submitted.active {
+  border-color: #765f2d;
+  background: #352a12;
+}
+
+.invoice-status-button.status-paid.active {
+  border-color: #28674c;
+  background: #10281f;
+}
+
+.invoice-status-button.status-notSubmitted.active {
+  border-color: #53658b;
+  background: #1c2639;
+}
+
+.invoice-baseline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  border: 1px solid #3b465f;
+  border-radius: 12px;
+  background: #121a28;
+  color: #8396c7;
+  padding: 9px 11px;
+  margin-bottom: 12px;
+  font-size: 11px;
+}
+
+.invoice-baseline strong {
+  color: #ffd36b;
+}
+
+.invoice-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.invoice-money-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid #29334b;
+  border-radius: 13px;
+  background: #121a28;
+}
+
+.invoice-money-tabs button {
+  border: 0;
+  border-radius: 9px;
+  min-height: 38px;
+  background: transparent;
+  color: #8396c7;
+  font-weight: 850;
+}
+
+.invoice-money-tabs button.active {
+  color: #fff;
+  background: #253a61;
+  box-shadow: inset 0 0 0 1px #38558a;
+}
+
+.invoice-money-value {
+  padding: 18px 0 12px;
+  text-align: center;
+  font-size: clamp(28px, 6vw, 42px);
+  font-weight: 950;
+}
+
+.invoice-money-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 7px;
+}
+
+.invoice-money-chips span {
+  border: 1px solid #34405f;
+  border-radius: 999px;
+  background: #20283b;
+  padding: 6px 9px;
+  color: #cbd7f0;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.invoice-period-list {
+  display: grid;
+  gap: 8px;
+  max-height: 520px;
+  overflow: auto;
+}
+
+.invoice-period-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid #2d3957;
+  border-radius: 14px;
+  background: #151c2b;
+  color: #dbe5ff;
+  text-align: left;
+  padding: 11px;
+}
+
+.invoice-period-card.selected {
+  border-color: #6aa0ff;
+  background: #17315f;
+}
+
+.invoice-number {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #263653;
+  color: #dce6ff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.invoice-period-main,
+.invoice-period-money {
+  display: grid;
+  gap: 3px;
+}
+
+.invoice-period-main small,
+.invoice-period-money small {
+  color: #8396c7;
+  font-size: 9px;
+}
+
+.invoice-period-money {
+  justify-items: end;
+}
+
+.invoice-period-money > small.status-submitted {
+  color: #ffd36b;
+}
+
+.invoice-period-money > small.status-paid {
+  color: #65efa7;
+}
+
+.invoice-entry-row {
+  grid-template-columns: 60px minmax(100px, .8fr) minmax(180px, 1.5fr) auto;
+}
+
+.invoice-entry-row b {
+  text-align: right;
+}
+
+@media (max-width: 760px) {
+  .invoice-rate-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .invoice-status-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .invoice-status-buttons {
+    justify-content: stretch;
+  }
+
+  .invoice-status-buttons button {
+    flex: 1;
+  }
+
+  .invoice-actions > button {
+    width: 100%;
+  }
+
+  .invoice-period-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .invoice-period-money {
+    grid-column: 2;
+    justify-items: start;
+  }
+
+  .invoice-entry-row {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+
+  .invoice-entry-row small,
+  .invoice-entry-row b {
+    grid-column: 2;
+    text-align: left;
+  }
+}
