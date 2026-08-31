@@ -121,6 +121,31 @@ async function workspaceRequest<T>(
   });
 }
 
+export async function openTemporaryWorkspace(): Promise<{
+  credentials: WorkspaceCredentials;
+  state: WorkspaceState;
+}> {
+  const response = await fetch('/api/account/open', {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+
+  const payload = await parseResponse<{
+    workspaceId: string;
+    state: WorkspaceState;
+  }>(response);
+
+  return {
+    credentials: {
+      workspaceId: payload.workspaceId,
+      sessionToken: 'temporary-login-bypass',
+    },
+    state: payload.state,
+  };
+}
+
 export async function fetchAccountWorkspace(): Promise<{
   workspaceId: string;
   exists: boolean;

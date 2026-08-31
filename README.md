@@ -26,6 +26,12 @@ The pre-NMRNL state of this repository is preserved on:
 - Work pay-period fortnight totals and daily breakdown
 - Mobile + desktop navigation
 
+## Temporary build access
+
+The login wall is temporarily disabled while Work mode is being ported. The app opens the single Maleroom Durable Object workspace directly. The existing Cloudflare Access + Google Authenticator code remains in the repository behind `TEMPORARY_LOGIN_BYPASS` and can be re-enabled by setting the switch back to `false`.
+
+**Do not treat the current deployment as private until the login wall is restored.**
+
 ## Authentication and privacy
 
 Each NMRNL workspace is a separate Durable Object and is enrolled into a TOTP authenticator during setup.

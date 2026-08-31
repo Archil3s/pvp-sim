@@ -23,6 +23,7 @@ import {
   loadKnownWorkspaceId,
   loginWithTotp,
   NMRNL_ACCOUNT_EMAIL,
+  openTemporaryWorkspace,
   rememberWorkspaceId,
   saveCredentials,
   confirmRecoveryAuthenticator,
@@ -52,6 +53,8 @@ import {
   type WorkspaceSetupChallenge,
   type WorkspaceState,
 } from './model';
+
+const TEMPORARY_LOGIN_BYPASS = true;
 
 const MODE_OPTIONS: Array<{ key: Mode; label: string }> = [
   { key: 'work', label: 'Work' },
@@ -2128,11 +2131,53 @@ export function App() {
   const [state, setState] = useState<WorkspaceState | null>(null);
   const [mode, setMode] = useState<Mode>('work');
   const [section, setSection] = useState<Section>('home');
-  const [loading, setLoading] = useState(Boolean(credentials));
+  const [loading, setLoading] = useState(
+    Boolean(credentials) || TEMPORARY_LOGIN_BYPASS,
+  );
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (!TEMPORARY_LOGIN_BYPASS || credentials) return;
+
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+
+    openTemporaryWorkspace()
+      .then((result) => {
+        if (cancelled) return;
+        rememberWorkspaceId(result.credentials.workspaceId);
+        setCredentials(result.credentials);
+        setState(result.state);
+      })
+      .catch((reason) => {
+        if (cancelled) return;
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : 'Could not open the temporary NMRNL workspace.',
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [credentials]);
+
+  useEffect(() => {
     if (!credentials) {
+      if (!TEMPORARY_LOGIN_BYPASS) setLoading(false);
+      return;
+    }
+
+    if (
+      TEMPORARY_LOGIN_BYPASS &&
+      credentials.sessionToken === 'temporary-login-bypass' &&
+      state
+    ) {
       setLoading(false);
       return;
     }
@@ -2176,6 +2221,16 @@ export function App() {
   }, [credentials]);
 
   if (!credentials) {
+    if (TEMPORARY_LOGIN_BYPASS) {
+      return (
+        <main className="loading-shell">
+          <div className="brand-mark">N</div>
+          <strong>Opening Maleroom workspace…</strong>
+          {error && <small>{error}</small>}
+        </main>
+      );
+    }
+
     return (
       <WorkspaceSetup
         onConnected={(nextCredentials, nextState) => {

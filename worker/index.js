@@ -21,6 +21,7 @@ const RATE_WINDOW_MS = 5 * 60 * 1000;
 const RATE_LOCK_MS = 10 * 60 * 1000;
 const MAX_AUTH_FAILURES = 5;
 const ACCOUNT_EMAIL = 'blenhiemmaleroom@gmail.com';
+const TEMPORARY_LOGIN_BYPASS = true;
 const RECOVERY_CODE_TTL_MS = 10 * 60 * 1000;
 const RECOVERY_ENROL_TTL_MS = 10 * 60 * 1000;
 const RECOVERY_SEND_COOLDOWN_MS = 60 * 1000;
@@ -336,6 +337,8 @@ export class SupervisorHub {
   }
 
   async requireAuth(request) {
+    if (TEMPORARY_LOGIN_BYPASS) return null;
+
     if (!(await this.authenticated(request))) {
       return json(
         { error: 'Session expired. Sign in with a new Authenticator code.' },
@@ -936,6 +939,13 @@ export class SupervisorHub {
         });
       }
 
+      if (suffix === '/temporary/open' && request.method === 'GET') {
+        if (!TEMPORARY_LOGIN_BYPASS) {
+          return json({ error: 'Temporary login bypass is disabled.' }, { status: 404 });
+        }
+        return json({ state: await this.snapshot() });
+      }
+
       if (suffix === '/auth/confirm' && request.method === 'POST') {
         return this.confirmInitialAuthenticator(request);
       }
@@ -1021,7 +1031,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    if (url.pathname.startsWith('/api/')) {
+    if (url.pathname.startsWith('/api/') && !TEMPORARY_LOGIN_BYPASS) {
       const email = await approvedAccessEmail(request, ctx);
       if (!email) {
         return json(
@@ -1041,10 +1051,66 @@ export default {
         ok: true,
         app: 'NMRNL',
         service: 'pvp-sim',
-        auth: 'cloudflare-access+totp',
+        auth: TEMPORARY_LOGIN_BYPASS
+          ? 'temporary-bypass'
+          : 'cloudflare-access+totp',
         accountEmail: ACCOUNT_EMAIL,
         storage: 'durable-object',
         now: new Date().toISOString(),
+      });
+    }
+
+    if (url.pathname === '/api/account/open' && request.method === 'POST') {
+      if (!TEMPORARY_LOGIN_BYPASS) {
+        return json({ error: 'Temporary login bypass is disabled.' }, { status: 404 });
+      }
+
+      const workspaceId = await accountWorkspaceId();
+      const objectId = env.SUPERVISOR_HUB.idFromName('nmrnl:' + workspaceId);
+      const stub = env.SUPERVISOR_HUB.get(objectId);
+
+      const statusResponse = await stub.fetch(
+        new Request(
+          url.origin + '/api/workspace/' + workspaceId + '/account/status',
+          { method: 'GET' },
+        ),
+      );
+      const status = await statusResponse.json();
+
+      if (!status.exists) {
+        const initResponse = await stub.fetch(
+          new Request(
+            url.origin + '/api/workspace/' + workspaceId + '/init',
+            {
+              method: 'POST',
+              headers: {
+                'x-workspace-id': workspaceId,
+                'x-totp-secret': generateTotpSecret(),
+              },
+            },
+          ),
+        );
+
+        if (!initResponse.ok && initResponse.status !== 409) {
+          return json(
+            { error: 'Could not initialise the Maleroom workspace.' },
+            { status: 500 },
+          );
+        }
+      }
+
+      const openResponse = await stub.fetch(
+        new Request(
+          url.origin + '/api/workspace/' + workspaceId + '/temporary/open',
+          { method: 'GET' },
+        ),
+      );
+      const opened = await openResponse.json();
+
+      return json({
+        workspaceId,
+        state: opened.state,
+        temporaryLoginBypass: true,
       });
     }
 
