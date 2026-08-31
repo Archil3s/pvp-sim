@@ -6,6 +6,8 @@ export type Section =
   | 'entries'
   | 'calendar'
   | 'payPeriod'
+  | 'adminReview'
+  | 'charts'
   | 'actions';
 
 export type EntryTypeKey =
@@ -32,6 +34,7 @@ export interface WorkSettings {
   hourlyRate: number;
   fuelRate: number;
   payPeriodAnchorDate: string;
+  weeklyHoursGoal: number;
 }
 
 export interface DriveConnectionState {

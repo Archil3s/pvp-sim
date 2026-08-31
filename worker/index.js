@@ -26,6 +26,7 @@ const DEFAULT_WORK_SETTINGS = {
   hourlyRate: 43,
   fuelRate: 1.17,
   payPeriodAnchorDate: '2025-12-14',
+  weeklyHoursGoal: 10,
 };
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
@@ -188,6 +189,7 @@ function normaliseData(value) {
   const hourlyRate = numberValue(rawSettings.hourlyRate);
   const fuelRate = numberValue(rawSettings.fuelRate);
   const anchor = stringValue(rawSettings.payPeriodAnchorDate);
+  const weeklyHoursGoal = numberValue(rawSettings.weeklyHoursGoal);
   const invoiceStatuses =
     value.invoiceStatuses &&
     typeof value.invoiceStatuses === 'object' &&
@@ -218,6 +220,10 @@ function normaliseData(value) {
       payPeriodAnchorDate: /^\d{4}-\d{2}-\d{2}$/.test(anchor)
         ? anchor
         : DEFAULT_WORK_SETTINGS.payPeriodAnchorDate,
+      weeklyHoursGoal:
+        weeklyHoursGoal != null && weeklyHoursGoal > 0
+          ? weeklyHoursGoal
+          : DEFAULT_WORK_SETTINGS.weeklyHoursGoal,
     },
     invoiceStatuses,
     invoiceBaselines,
@@ -962,6 +968,35 @@ export class SupervisorHub {
     return json({ state: await this.snapshot(null, data), entry });
   }
 
+  async resolveEntryAdmin(request, entryId) {
+    const body = await readObject(request);
+    const data = await this.getData();
+    const entry = data.entries.find((item) => item.id === entryId);
+
+    if (!entry) {
+      return json({ error: 'Entry not found.' }, { status: 404 });
+    }
+
+    const now = new Date().toISOString();
+
+    if (body.completeActions === true) {
+      entry.nextActions = (Array.isArray(entry.nextActions) ? entry.nextActions : []).map(
+        (action) => ({
+          ...action,
+          completedAt: action.completedAt || now,
+        }),
+      );
+    }
+
+    if (body.clearReplyNeeded === true) {
+      entry.textReplyNeeded = false;
+    }
+
+    entry.updatedAt = now;
+    await this.putData(data);
+    return json({ state: await this.snapshot(null, data) });
+  }
+
   async updateSupportNote(request, entryId) {
     const body = await readObject(request);
     const data = await this.getData();
@@ -1097,6 +1132,7 @@ export class SupervisorHub {
     const hourlyRate = numberValue(body.hourlyRate);
     const fuelRate = numberValue(body.fuelRate);
     const payPeriodAnchorDate = stringValue(body.payPeriodAnchorDate);
+    const weeklyHoursGoal = numberValue(body.weeklyHoursGoal);
 
     if (hourlyRate == null || hourlyRate < 0 || hourlyRate > 10000) {
       return json({ error: 'Hourly rate must be a valid positive number.' }, { status: 400 });
@@ -1107,11 +1143,15 @@ export class SupervisorHub {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(payPeriodAnchorDate)) {
       return json({ error: 'Pay-period anchor date is invalid.' }, { status: 400 });
     }
+    if (weeklyHoursGoal == null || weeklyHoursGoal <= 0 || weeklyHoursGoal > 168) {
+      return json({ error: 'Weekly hours goal must be between 1 and 168.' }, { status: 400 });
+    }
 
     data.settings = {
       hourlyRate,
       fuelRate,
       payPeriodAnchorDate,
+      weeklyHoursGoal,
     };
 
     await this.putData(data);
@@ -1262,6 +1302,16 @@ export class SupervisorHub {
 
       if (suffix === '/entries' && request.method === 'POST') {
         return this.createEntry(request);
+      }
+
+      const adminResolve = suffix.match(
+        /^\/entries\/([^/]+)\/admin-resolve$/,
+      );
+      if (adminResolve && request.method === 'PATCH') {
+        return this.resolveEntryAdmin(
+          request,
+          decodeURIComponent(adminResolve[1]),
+        );
       }
 
       const supportNoteUpdate = suffix.match(

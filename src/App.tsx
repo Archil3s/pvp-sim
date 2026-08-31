@@ -24,6 +24,7 @@ import {
   loginWithTotp,
   openTemporaryWorkspace,
   rememberWorkspaceId,
+  resolveEntryAdmin,
   saveCredentials,
   confirmRecoveryAuthenticator,
   setEntryCalendarEntered,
@@ -771,6 +772,21 @@ function HomeScreen({
           </div>
         </Panel>
       </div>
+
+      <Panel title="Work review" subtitle="Finish admin, then see the fortnight at a glance">
+        <div className="home-work-tools">
+          <button className="secondary" onClick={() => go('adminReview')}>
+            <span>◎</span>
+            <strong>Admin Review</strong>
+            <small>Replies, calendar gaps, notes and follow-ups</small>
+          </button>
+          <button className="secondary" onClick={() => go('charts')}>
+            <span>▥</span>
+            <strong>Charts & Insights</strong>
+            <small>Hours, earnings, travel and workflow health</small>
+          </button>
+        </div>
+      </Panel>
     </div>
   );
 }
@@ -2197,6 +2213,7 @@ function PayPeriodScreen({
           hourlyRate: parsedHourly,
           fuelRate: parsedFuel,
           payPeriodAnchorDate: anchorDate,
+          weeklyHoursGoal: state.settings.weeklyHoursGoal,
         }),
       );
       setRateEditing(false);
@@ -2569,6 +2586,779 @@ function PayPeriodScreen({
           </div>
         )}
       </Panel>
+    </div>
+  );
+}
+
+
+type DailyWorkPoint = {
+  date: string;
+  entries: number;
+  billableHours: number;
+  earnings: number;
+  kilometres: number;
+};
+
+function workFortnightEntries(
+  entries: WorkEntry[],
+  start: Date,
+): WorkEntry[] {
+  const startKey = localDateValue(start);
+  const endKey = localDateValue(addCalendarDays(start, 13));
+  return entries.filter(
+    (entry) =>
+      entry.mode === 'work' &&
+      entry.date >= startKey &&
+      entry.date <= endKey,
+  );
+}
+
+function dailyWorkPoints(
+  entries: WorkEntry[],
+  start: Date,
+  hourlyRate: number,
+): DailyWorkPoint[] {
+  return Array.from({ length: 14 }, (_, index) => {
+    const date = addCalendarDays(start, index);
+    const key = localDateValue(date);
+    const dayEntries = entries.filter((entry) => entry.date === key);
+
+    return {
+      date: key,
+      entries: dayEntries.length,
+      billableHours: dayEntries.reduce(
+        (sum, entry) => sum + entryBillableHours(entry),
+        0,
+      ),
+      earnings: dayEntries.reduce(
+        (sum, entry) => sum + entryEarnings(entry, hourlyRate),
+        0,
+      ),
+      kilometres: dayEntries.reduce(
+        (sum, entry) => sum + entryKilometres(entry),
+        0,
+      ),
+    };
+  });
+}
+
+function percentage(done: number, total: number): number {
+  if (total <= 0) return 100;
+  return Math.max(0, Math.min(100, (done / total) * 100));
+}
+
+function TrendRow({
+  label,
+  current,
+  delta,
+  suffix = '',
+  moneyDelta = false,
+  whole = false,
+}: {
+  label: string;
+  current: string;
+  delta: number;
+  suffix?: string;
+  moneyDelta?: boolean;
+  whole?: boolean;
+}) {
+  const positive = delta >= 0;
+  const displayDelta = moneyDelta
+    ? (positive ? '+' : '−') + money(Math.abs(delta))
+    : (positive ? '+' : '−') +
+      Math.abs(delta).toFixed(whole ? 0 : 1) +
+      suffix;
+
+  return (
+    <div className="trend-row">
+      <span>{label}</span>
+      <strong>{current}</strong>
+      <b className={positive ? 'positive' : 'negative'}>{displayDelta}</b>
+    </div>
+  );
+}
+
+function HealthBar({
+  label,
+  done,
+  total,
+  tone,
+}: {
+  label: string;
+  done: number;
+  total: number;
+  tone: 'green' | 'purple' | 'amber';
+}) {
+  const progress = percentage(done, total);
+  return (
+    <div className="health-row">
+      <div className="health-row-head">
+        <strong>{label}</strong>
+        <span>{Math.round(progress)}% · {done}/{total}</span>
+      </div>
+      <div className="health-track">
+        <i className={tone} style={{ width: progress + '%' }} />
+      </div>
+    </div>
+  );
+}
+
+function MiniBarChart({
+  points,
+  value,
+  label,
+}: {
+  points: DailyWorkPoint[];
+  value: (point: DailyWorkPoint) => number;
+  label: string;
+}) {
+  const max = Math.max(1, ...points.map(value));
+  return (
+    <div className="mini-bar-chart" aria-label={label}>
+      {points.map((point) => {
+        const raw = value(point);
+        const height = Math.max(raw > 0 ? 8 : 2, (raw / max) * 100);
+        return (
+          <div className="mini-bar-column" key={point.date} title={formatDate(point.date) + ': ' + raw.toFixed(2) + ' ' + label}>
+            <div className="mini-bar-rail">
+              <i style={{ height: height + '%' }} />
+            </div>
+            <small>{new Date(point.date + 'T12:00:00').getDate()}</small>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function CumulativeEarningsChart({
+  points,
+}: {
+  points: DailyWorkPoint[];
+}) {
+  let running = 0;
+  const cumulative = points.map((point) => {
+    running += point.earnings;
+    return running;
+  });
+  const max = Math.max(1, ...cumulative);
+  const coords = cumulative.map((value, index) => {
+    const x = points.length <= 1 ? 0 : (index / (points.length - 1)) * 100;
+    const y = 92 - (value / max) * 82;
+    return [x, y] as const;
+  });
+  const path = coords
+    .map(([x, y], index) => (index === 0 ? 'M ' : 'L ') + x.toFixed(2) + ' ' + y.toFixed(2))
+    .join(' ');
+
+  return (
+    <div className="earnings-chart">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Cumulative earnings">
+        <path className="earnings-area" d={path + ' L 100 100 L 0 100 Z'} />
+        <path className="earnings-line" d={path} />
+      </svg>
+      <div className="earnings-chart-footer">
+        <span>{formatDate(points[0]?.date || localDateValue())}</span>
+        <strong>{money(cumulative[cumulative.length - 1] || 0)}</strong>
+        <span>{formatDate(points[points.length - 1]?.date || localDateValue())}</span>
+      </div>
+    </div>
+  );
+}
+
+function BreakdownBars({
+  rows,
+}: {
+  rows: Array<{ label: string; value: number; detail: string }>;
+}) {
+  const max = Math.max(1, ...rows.map((row) => row.value));
+  if (!rows.length) {
+    return <EmptyState title="No data yet" detail="This period has no Work entries." />;
+  }
+
+  return (
+    <div className="breakdown-bars">
+      {rows.map((row) => (
+        <div className="breakdown-row" key={row.label}>
+          <div>
+            <strong>{row.label}</strong>
+            <small>{row.detail}</small>
+          </div>
+          <div className="breakdown-track">
+            <i style={{ width: Math.max(4, (row.value / max) * 100) + '%' }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ChartsScreen({
+  state,
+  credentials,
+  onState,
+}: {
+  state: WorkspaceState;
+  credentials: WorkspaceCredentials;
+  onState: (state: WorkspaceState) => void;
+}) {
+  const [offset, setOffset] = useState(0);
+  const [goalEditing, setGoalEditing] = useState(false);
+  const [goal, setGoal] = useState(String(state.settings.weeklyHoursGoal));
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setGoal(String(state.settings.weeklyHoursGoal));
+  }, [state.settings.weeklyHoursGoal]);
+
+  const baseStart = fortnightStartFor(
+    new Date(),
+    state.settings.payPeriodAnchorDate,
+  );
+  const start = addCalendarDays(baseStart, offset * 14);
+  const end = addCalendarDays(start, 13);
+  const previousStart = addCalendarDays(start, -14);
+  const entries = workFortnightEntries(state.entries, start);
+  const previous = workFortnightEntries(state.entries, previousStart);
+  const points = dailyWorkPoints(entries, start, state.settings.hourlyRate);
+
+  const billableHours = entries.reduce(
+    (sum, entry) => sum + entryBillableHours(entry),
+    0,
+  );
+  const previousHours = previous.reduce(
+    (sum, entry) => sum + entryBillableHours(entry),
+    0,
+  );
+  const earnings = entries.reduce(
+    (sum, entry) => sum + entryEarnings(entry, state.settings.hourlyRate),
+    0,
+  );
+  const previousEarnings = previous.reduce(
+    (sum, entry) => sum + entryEarnings(entry, state.settings.hourlyRate),
+    0,
+  );
+  const kilometres = entries.reduce(
+    (sum, entry) => sum + entryKilometres(entry),
+    0,
+  );
+  const previousKm = previous.reduce(
+    (sum, entry) => sum + entryKilometres(entry),
+    0,
+  );
+  const fuel = entries.reduce(
+    (sum, entry) =>
+      sum + entryTravelReimbursement(entry, state.settings.fuelRate),
+    0,
+  );
+  const average = entries.length ? earnings / entries.length : 0;
+
+  const noteReady = entries.filter((entry) =>
+    hasSupportNoteContent(entry.supportNoteBreakdown),
+  ).length;
+  const calendarReady = entries.filter(
+    (entry) => entry.googleCalendarEntered,
+  ).length;
+  const allActions = entries.flatMap((entry) => entry.nextActions);
+  const completedActions = allActions.filter(
+    (action) => Boolean(action.completedAt),
+  ).length;
+
+  const visitHours = entries.reduce(
+    (sum, entry) => sum + Math.max(0, entry.minutes) / 60,
+    0,
+  );
+  const noteHours = entries.reduce(
+    (sum, entry) =>
+      sum + Math.max(0, entryBillableMinutes(entry) - entry.minutes) / 60,
+    0,
+  );
+  const totalTime = visitHours + noteHours;
+
+  const weekOneHours = entries
+    .filter((entry) => entry.date <= localDateValue(addCalendarDays(start, 6)))
+    .reduce((sum, entry) => sum + entryBillableHours(entry), 0);
+  const weekTwoHours = entries
+    .filter((entry) => entry.date >= localDateValue(addCalendarDays(start, 7)))
+    .reduce((sum, entry) => sum + entryBillableHours(entry), 0);
+
+  const bestDay = [...points]
+    .filter((point) => point.billableHours > 0)
+    .sort((a, b) => b.billableHours - a.billableHours)[0];
+
+  const clients = new Map<
+    string,
+    { hours: number; entries: number; earnings: number; kilometres: number }
+  >();
+  for (const entry of entries) {
+    const current = clients.get(entry.client) || {
+      hours: 0,
+      entries: 0,
+      earnings: 0,
+      kilometres: 0,
+    };
+    current.hours += entryBillableHours(entry);
+    current.entries += 1;
+    current.earnings += entryEarnings(entry, state.settings.hourlyRate);
+    current.kilometres += entryKilometres(entry);
+    clients.set(entry.client, current);
+  }
+  const clientRows = [...clients.entries()]
+    .map(([label, value]) => ({
+      label,
+      value: value.hours,
+      detail:
+        value.entries +
+        ' entries · ' +
+        value.hours.toFixed(2) +
+        'h · ' +
+        money(value.earnings),
+    }))
+    .sort((a, b) => b.value - a.value);
+
+  const typeMap = new Map<string, number>();
+  for (const entry of entries) {
+    const label = entryType(entry.type).label;
+    typeMap.set(label, (typeMap.get(label) || 0) + 1);
+  }
+  const typeRows = [...typeMap.entries()]
+    .map(([label, value]) => ({
+      label,
+      value,
+      detail: value + (value === 1 ? ' entry' : ' entries'),
+    }))
+    .sort((a, b) => b.value - a.value);
+
+  const saveGoal = async () => {
+    const parsed = Number(goal);
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 168) {
+      setError('Weekly hours goal must be between 1 and 168.');
+      return;
+    }
+
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      onState(
+        await updateWorkSettings(credentials, {
+          hourlyRate: state.settings.hourlyRate,
+          fuelRate: state.settings.fuelRate,
+          payPeriodAnchorDate: state.settings.payPeriodAnchorDate,
+          weeklyHoursGoal: parsed,
+        }),
+      );
+      setGoalEditing(false);
+      setMessage('Weekly Work goal saved.');
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : 'Could not save the weekly goal.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const goalValue = state.settings.weeklyHoursGoal || 10;
+  const visitShare = totalTime > 0 ? (visitHours / totalTime) * 100 : 0;
+  const noteShare = totalTime > 0 ? (noteHours / totalTime) * 100 : 0;
+
+  return (
+    <div className="page-stack">
+      <section className="page-title">
+        <div>
+          <div className="eyebrow">WORK ANALYTICS</div>
+          <h2>Charts & Insights</h2>
+          <p>Fortnight trends, workflow health, client mix and billable time.</p>
+        </div>
+        <div className="period-controls">
+          <button className="secondary compact" onClick={() => setOffset((value) => value - 1)}>← Previous</button>
+          <button className="secondary compact" onClick={() => setOffset(0)}>Current</button>
+          <button className="secondary compact" onClick={() => setOffset((value) => value + 1)}>Next →</button>
+        </div>
+      </section>
+
+      {error && <div className="error-banner">{error}</div>}
+      {message && <div className="success-banner">{message}</div>}
+
+      <Panel
+        title="Chart Period"
+        subtitle={formatDate(localDateValue(start)) + ' – ' + formatDate(localDateValue(end))}
+      >
+        <div className="stat-grid compact-stats">
+          <StatCard label="Entries" value={String(entries.length)} />
+          <StatCard label="Hours" value={billableHours.toFixed(2)} />
+          <StatCard label="Earned" value={money(earnings)} />
+          <StatCard label="KM" value={kilometres.toFixed(1)} />
+          <StatCard label="Fuel" value={money(fuel)} />
+          <StatCard label="Avg / Entry" value={money(average)} />
+        </div>
+      </Panel>
+
+      <div className="analytics-two-col">
+        <Panel title="Trend vs Previous Fortnight">
+          <div className="trend-list">
+            <TrendRow label="Hours" current={billableHours.toFixed(2)} delta={billableHours - previousHours} suffix="h" />
+            <TrendRow label="Earnings" current={money(earnings)} delta={earnings - previousEarnings} moneyDelta />
+            <TrendRow label="Kilometres" current={kilometres.toFixed(1)} delta={kilometres - previousKm} suffix="km" />
+            <TrendRow label="Visits" current={String(entries.length)} delta={entries.length - previous.length} whole />
+          </div>
+        </Panel>
+
+        <Panel title="Workflow Health">
+          <div className="health-list">
+            <HealthBar label="Support notes ready" done={noteReady} total={entries.length} tone="green" />
+            <HealthBar label="Calendar entered" done={calendarReady} total={entries.length} tone="purple" />
+            <HealthBar label="Next actions complete" done={completedActions} total={allActions.length} tone="amber" />
+          </div>
+        </Panel>
+      </div>
+
+      <div className="analytics-two-col">
+        <Panel title="Billable Time Mix">
+          <div className="time-mix-stats">
+            <div><span>Visit</span><strong>{visitHours.toFixed(2)}h</strong></div>
+            <div><span>Notes</span><strong>{noteHours.toFixed(2)}h</strong></div>
+          </div>
+          <div className="mix-row">
+            <span>Visit time</span><b>{Math.round(visitShare)}%</b>
+            <div><i className="visit" style={{ width: visitShare + '%' }} /></div>
+          </div>
+          <div className="mix-row">
+            <span>Note allowance</span><b>{Math.round(noteShare)}%</b>
+            <div><i className="notes" style={{ width: noteShare + '%' }} /></div>
+          </div>
+        </Panel>
+
+        <Panel
+          title="Weekly Goal"
+          action={
+            <button className="text-button" onClick={() => setGoalEditing((value) => !value)}>
+              {goalEditing ? 'Close' : 'Edit goal'}
+            </button>
+          }
+        >
+          {goalEditing && (
+            <div className="goal-editor">
+              <input inputMode="decimal" value={goal} onChange={(event) => setGoal(event.target.value)} />
+              <button className="primary compact" disabled={busy} onClick={() => void saveGoal()}>
+                {busy ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          )}
+          <div className="goal-block">
+            <div><strong>Week 1</strong><span>{weekOneHours.toFixed(2)} / {goalValue.toFixed(1)}h</span></div>
+            <div className="goal-track"><i style={{ width: Math.min(100, (weekOneHours / goalValue) * 100) + '%' }} /></div>
+          </div>
+          <div className="goal-block">
+            <div><strong>Week 2</strong><span>{weekTwoHours.toFixed(2)} / {goalValue.toFixed(1)}h</span></div>
+            <div className="goal-track"><i style={{ width: Math.min(100, (weekTwoHours / goalValue) * 100) + '%' }} /></div>
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="Fortnight Insights">
+        <div className="insight-grid">
+          <div><span>Best day</span><strong>{bestDay ? formatDate(bestDay.date) + ' · ' + bestDay.billableHours.toFixed(2) + 'h' : '—'}</strong></div>
+          <div><span>Top client</span><strong>{clientRows[0] ? clientRows[0].label + ' · ' + clientRows[0].value.toFixed(2) + 'h' : '—'}</strong></div>
+          <div><span>Average hours / entry</span><strong>{entries.length ? (billableHours / entries.length).toFixed(2) + 'h' : '0.00h'}</strong></div>
+          <div><span>Fuel reimbursement</span><strong>{money(fuel)}</strong></div>
+        </div>
+      </Panel>
+
+      {entries.length === 0 ? (
+        <Panel title="Charts">
+          <EmptyState title="No chart data" detail="Visual charts will populate after Work entries are saved in this period." />
+        </Panel>
+      ) : (
+        <>
+          <Panel title="Daily Activity Strip" subtitle="Each square represents one day in the selected fortnight">
+            <div className="activity-strip">
+              {points.map((point) => (
+                <div className={'activity-day level-' + Math.min(4, point.entries)} key={point.date}>
+                  <strong>{new Date(point.date + 'T12:00:00').getDate()}</strong>
+                  <small>{point.entries}</small>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <div className="analytics-two-col">
+            <Panel title="Hours by Day"><MiniBarChart points={points} value={(point) => point.billableHours} label="hours" /></Panel>
+            <Panel title="KM by Day"><MiniBarChart points={points} value={(point) => point.kilometres} label="km" /></Panel>
+          </div>
+
+          <Panel title="Cumulative Earnings"><CumulativeEarningsChart points={points} /></Panel>
+
+          <div className="analytics-two-col">
+            <Panel title="Client Hours"><BreakdownBars rows={clientRows} /></Panel>
+            <Panel title="Entry Type Breakdown"><BreakdownBars rows={typeRows} /></Panel>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ReviewEntry({
+  entry,
+  actions,
+}: {
+  entry: WorkEntry;
+  actions: ReactNode;
+}) {
+  const openActions = entry.nextActions.filter((action) => !action.completedAt).length;
+  return (
+    <div className="review-entry">
+      <div className="review-entry-icon">{entryType(entry.type).icon}</div>
+      <div className="review-entry-main">
+        <strong>{entry.client}</strong>
+        <span>{entryType(entry.type).label} · {formatDate(entry.date)} · {entry.startTime}</span>
+        {entry.type === 'textNote' && (
+          <small>
+            {entry.textContactDirection} · {entry.importantText ? 'Important' : 'Not important'} · {entry.textReplyNeeded ? 'Reply needed' : 'No reply needed'}
+          </small>
+        )}
+        {openActions > 0 && <small className="review-open-actions">{openActions} open action{openActions === 1 ? '' : 's'}</small>}
+      </div>
+      <div className="review-entry-actions">{actions}</div>
+    </div>
+  );
+}
+
+function ReviewSection({
+  title,
+  empty,
+  entries,
+  renderActions,
+}: {
+  title: string;
+  empty: string;
+  entries: WorkEntry[];
+  renderActions: (entry: WorkEntry) => ReactNode;
+}) {
+  return (
+    <Panel title={title}>
+      {entries.length === 0 ? (
+        <EmptyState title="All clear" detail={empty} />
+      ) : (
+        <div className="review-list">
+          {entries.slice(0, 5).map((entry) => (
+            <ReviewEntry key={entry.id} entry={entry} actions={renderActions(entry)} />
+          ))}
+          {entries.length > 5 && <div className="review-more">+{entries.length - 5} more</div>}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function AdminReviewScreen({
+  state,
+  credentials,
+  onState,
+  go,
+}: {
+  state: WorkspaceState;
+  credentials: WorkspaceCredentials;
+  onState: (state: WorkspaceState) => void;
+  go: (section: Section) => void;
+}) {
+  const [busy, setBusy] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const entries = [...state.entries]
+    .filter((entry) => entry.mode === 'work')
+    .sort((a, b) => (b.date + b.startTime).localeCompare(a.date + a.startTime));
+  const replyNeeded = entries.filter(
+    (entry) => entry.type === 'textNote' && entry.textReplyNeeded,
+  );
+  const calendarGaps = entries.filter((entry) => !entry.googleCalendarEntered);
+  const missingNotes = entries.filter(
+    (entry) => !hasSupportNoteContent(entry.supportNoteBreakdown),
+  );
+  const openActions = entries.filter((entry) =>
+    entry.nextActions.some((action) => !action.completedAt),
+  );
+  const recentCutoff = todayStart() - 6 * 86_400_000;
+  const recentImportantTexts = entries.filter(
+    (entry) =>
+      entry.type === 'textNote' &&
+      entry.importantText &&
+      new Date(entry.date + 'T12:00:00').getTime() >= recentCutoff,
+  );
+
+  const resolveEntry = async (
+    entry: WorkEntry,
+    clearReplyNeeded: boolean,
+  ) => {
+    setBusy('resolve:' + entry.id);
+    setError('');
+    setMessage('');
+    try {
+      onState(
+        await resolveEntryAdmin(credentials, entry.id, {
+          completeActions: true,
+          clearReplyNeeded,
+        }),
+      );
+      setMessage('Admin item completed for ' + entry.client + '.');
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : 'Could not complete that admin item.',
+      );
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const createEvent = async (entry: WorkEntry) => {
+    setBusy('calendar:' + entry.id);
+    setError('');
+    setMessage('');
+
+    const popup = window.open(
+      googleCalendarDraftUrl(entry),
+      '_blank',
+      'noopener,noreferrer',
+    );
+    if (!popup) {
+      setBusy('');
+      setError('Google Calendar was blocked. Allow pop-ups for NMRNL and try again.');
+      return;
+    }
+
+    try {
+      onState(await setEntryCalendarEntered(credentials, entry.id, true));
+      setMessage('Calendar draft opened for ' + entry.client + '.');
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : 'Calendar opened, but NMRNL could not update the entry.',
+      );
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const openDrive = () => {
+    if (!state.drive.rootFolderId) {
+      go('payPeriod');
+      return;
+    }
+    window.open(
+      'https://drive.google.com/drive/folders/' + encodeURIComponent(state.drive.rootFolderId),
+      '_blank',
+      'noopener,noreferrer',
+    );
+  };
+
+  return (
+    <div className="page-stack">
+      <section className="page-title">
+        <div>
+          <div className="eyebrow">FINISH WORK ADMIN</div>
+          <h2>Admin Review</h2>
+          <p>One place for replies, calendar gaps, unfinished notes and next actions.</p>
+        </div>
+      </section>
+
+      {error && <div className="error-banner">{error}</div>}
+      {message && <div className="success-banner">{message}</div>}
+
+      <div className="stat-grid compact-stats">
+        <StatCard label="Replies" value={String(replyNeeded.length)} />
+        <StatCard label="Calendar" value={String(calendarGaps.length)} />
+        <StatCard label="Notes" value={String(missingNotes.length)} />
+        <StatCard label="Actions" value={String(openActions.length)} />
+      </div>
+
+      <Panel title="Finish Admin">
+        <div className="finish-admin-grid">
+          <button className="primary" onClick={() => go('quick')}>＋ Add Entry</button>
+          <button className="secondary" onClick={() => go('entries')}>✎ Edit Entries</button>
+          <button className="secondary" onClick={() => go('calendar')}>▦ Calendar</button>
+          <button className="secondary" onClick={openDrive}>
+            {state.drive.rootFolderId ? '◫ Open Drive' : '◫ Set up Drive'}
+          </button>
+        </div>
+      </Panel>
+
+      <ReviewSection
+        title="Texts Needing Reply"
+        empty="No written-contact replies waiting."
+        entries={replyNeeded}
+        renderActions={(entry) => (
+          <>
+            <button
+              className="secondary compact"
+              disabled={busy === 'resolve:' + entry.id}
+              onClick={() => void resolveEntry(entry, true)}
+            >
+              ✓ Mark reply done
+            </button>
+            <button className="secondary compact" onClick={() => go('entries')}>Edit</button>
+          </>
+        )}
+      />
+
+      <ReviewSection
+        title="Needs Calendar"
+        empty="All saved entries are marked in calendar."
+        entries={calendarGaps}
+        renderActions={(entry) => (
+          <>
+            <button
+              className="secondary compact"
+              disabled={busy === 'calendar:' + entry.id}
+              onClick={() => void createEvent(entry)}
+            >
+              ▦ Create event
+            </button>
+            <button className="secondary compact" onClick={() => go('calendar')}>Calendar</button>
+          </>
+        )}
+      />
+
+      <ReviewSection
+        title="Missing Note Detail"
+        empty="All entries have support-note detail."
+        entries={missingNotes}
+        renderActions={() => (
+          <button className="secondary compact" onClick={() => go('entries')}>Open entries</button>
+        )}
+      />
+
+      <ReviewSection
+        title="Open Next Actions"
+        empty="No open next actions."
+        entries={openActions}
+        renderActions={(entry) => (
+          <>
+            <button
+              className="secondary compact"
+              disabled={busy === 'resolve:' + entry.id}
+              onClick={() => void resolveEntry(entry, entry.type === 'textNote')}
+            >
+              ✓ Mark done
+            </button>
+            <button className="secondary compact" onClick={() => go('actions')}>Actions</button>
+          </>
+        )}
+      />
+
+      <ReviewSection
+        title="Important Texts"
+        empty="No important written contacts in the last 7 days."
+        entries={recentImportantTexts}
+        renderActions={() => (
+          <button className="secondary compact" onClick={() => go('entries')}>Review</button>
+        )}
+      />
     </div>
   );
 }
@@ -3388,6 +4178,8 @@ export function App() {
     { key: 'entries', label: 'Entries', icon: '▤' },
     { key: 'calendar', label: 'Calendar', icon: '▦' },
     { key: 'payPeriod', label: 'Pay Period', icon: '◫' },
+    { key: 'adminReview', label: 'Review', icon: '◎' },
+    { key: 'charts', label: 'Charts', icon: '▥' },
     { key: 'actions', label: 'Actions', icon: '✓' },
   ];
 
@@ -3470,6 +4262,21 @@ export function App() {
           )}
           {section === 'payPeriod' && (
             <PayPeriodScreen
+              state={state}
+              credentials={credentials}
+              onState={setState}
+            />
+          )}
+          {section === 'adminReview' && (
+            <AdminReviewScreen
+              state={state}
+              credentials={credentials}
+              onState={setState}
+              go={setSection}
+            />
+          )}
+          {section === 'charts' && (
+            <ChartsScreen
               state={state}
               credentials={credentials}
               onState={setState}

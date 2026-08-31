@@ -367,11 +367,30 @@ export function updateWorkSettings(
     hourlyRate: number;
     fuelRate: number;
     payPeriodAnchorDate: string;
+    weeklyHoursGoal: number;
   },
 ): Promise<WorkspaceState> {
   return workspaceRequest<{ state: WorkspaceState }>(
     credentials,
     '/settings/work',
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    },
+  ).then((payload) => payload.state);
+}
+
+export function resolveEntryAdmin(
+  credentials: WorkspaceCredentials,
+  entryId: string,
+  input: {
+    completeActions: boolean;
+    clearReplyNeeded: boolean;
+  },
+): Promise<WorkspaceState> {
+  return workspaceRequest<{ state: WorkspaceState }>(
+    credentials,
+    '/entries/' + encodeURIComponent(entryId) + '/admin-resolve',
     {
       method: 'PATCH',
       body: JSON.stringify(input),

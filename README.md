@@ -33,6 +33,9 @@ The pre-NMRNL state of this repository is preserved on:
 - Google Drive Work folder setup (NMRNL Work / Client Notes / Invoices)
 - Support-note Google Doc sync into client → invoice-period → work-type folders
 - Invoice-period Drive folder sync with invoice summary Google Doc and shortcuts to support notes
+- Admin Review queue for replies, calendar gaps, missing notes, open actions and important texts
+- Fortnight analytics with trends, workflow health, billable-time mix and editable weekly hours goal
+- Visual Work charts for daily hours/KM, cumulative earnings, client hours and entry-type mix
 - Mobile + desktop navigation
 
 ## Temporary build access
@@ -109,7 +112,8 @@ After the Worker is renamed to `nmrnl` in the Cloudflare dashboard, update the W
 
 ## Next port slices
 
-- Admin review and charts
+- Active visit / start-finish workflow
+- Remaining Work dashboard polish and deeper Drive sync
 
 
 ## Google Drive runtime configuration
