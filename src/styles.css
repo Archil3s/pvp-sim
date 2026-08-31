@@ -1858,3 +1858,163 @@ button.danger-button {
     word-break: break-all;
   }
 }
+
+
+/* Code-first Authenticator login */
+
+.code-login-card {
+  width: min(100%, 520px);
+}
+
+.code-login-brand {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.code-login-brand .brand-mark {
+  margin: 0;
+}
+
+.code-login-brand h1 {
+  margin: 5px 0 0;
+  font-size: clamp(34px, 8vw, 50px);
+  line-height: 0.98;
+}
+
+.code-login-lead {
+  margin-bottom: 20px;
+}
+
+.code-login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.workspace-login-field,
+.code-prompt {
+  display: grid;
+  gap: 7px;
+  color: #d6dff6;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.remembered-workspace {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #2c6046;
+  border-radius: 14px;
+  background: #102219;
+  padding: 11px 12px;
+}
+
+.remembered-check {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #75f1aa;
+  background: #173d2a;
+  font-weight: 950;
+}
+
+.remembered-workspace > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+.remembered-workspace strong {
+  font-size: 11px;
+}
+
+.remembered-workspace small {
+  color: #7ca78e;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.code-prompt {
+  text-align: center;
+  margin-top: 2px;
+}
+
+.code-prompt > span {
+  color: #9eb0da;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-size: 9px;
+}
+
+.totp-input.login-code {
+  min-height: 68px;
+  padding-left: calc(14px + 0.34em);
+  border-radius: 17px;
+  border-color: #4569a4;
+  background: #151f32;
+  font-size: clamp(28px, 8vw, 38px);
+  letter-spacing: 0.34em;
+  box-shadow: inset 0 0 0 1px rgba(79, 141, 247, 0.08);
+}
+
+.totp-input.login-code:focus {
+  border-color: #6ba2ff;
+  box-shadow:
+    0 0 0 4px rgba(79, 141, 247, 0.14),
+    inset 0 0 0 1px rgba(107, 162, 255, 0.12);
+}
+
+.open-nmrnl {
+  width: 100%;
+}
+
+.switch-workspace-button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #8fb7ff;
+  padding: 12px 8px 3px;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.switch-workspace-button:hover {
+  color: white;
+}
+
+.code-login-note {
+  margin-top: 15px;
+}
+
+.create-secondary {
+  width: 100%;
+}
+
+@media (max-width: 480px) {
+  .code-login-brand {
+    grid-template-columns: 48px minmax(0, 1fr);
+    gap: 13px;
+  }
+
+  .code-login-brand .brand-mark {
+    width: 48px;
+    height: 48px;
+    border-radius: 15px;
+    font-size: 20px;
+  }
+
+  .code-login-brand h1 {
+    font-size: 34px;
+  }
+
+  .totp-input.login-code {
+    min-height: 64px;
+    font-size: 30px;
+  }
+}

@@ -108,7 +108,11 @@ function WorkspaceSetup({
 }: {
   onConnected: (credentials: WorkspaceCredentials, state: WorkspaceState) => void;
 }) {
-  const [workspaceId, setWorkspaceId] = useState(() => loadKnownWorkspaceId());
+  const rememberedWorkspaceId = loadKnownWorkspaceId();
+  const [workspaceId, setWorkspaceId] = useState(rememberedWorkspaceId);
+  const [showWorkspaceField, setShowWorkspaceField] = useState(
+    !rememberedWorkspaceId,
+  );
   const [code, setCode] = useState('');
   const [challenge, setChallenge] = useState<WorkspaceSetupChallenge | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
@@ -150,6 +154,7 @@ function WorkspaceSetup({
       const nextChallenge = await createWorkspace();
       rememberWorkspaceId(nextChallenge.workspaceId);
       setWorkspaceId(nextChallenge.workspaceId);
+      setShowWorkspaceField(false);
       setChallenge(nextChallenge);
       setCode('');
     } catch (reason) {
@@ -190,6 +195,7 @@ function WorkspaceSetup({
       onConnected(result.credentials, result.state);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Authenticator code rejected.');
+      setCode('');
     } finally {
       setBusy(null);
     }
@@ -263,62 +269,110 @@ function WorkspaceSetup({
     );
   }
 
+  const hasRememberedWorkspace = Boolean(
+    rememberedWorkspaceId && !showWorkspaceField,
+  );
+
   return (
     <main className="setup-shell">
-      <section className="setup-card">
-        <div className="brand-mark">N</div>
-        <div className="eyebrow">PRIVATE CLOUDFLARE WORKSPACE</div>
-        <h1>NMRNL</h1>
-        <p className="setup-lead">
-          Secure your support workspace with a rotating code from Google Authenticator.
+      <section className="setup-card code-login-card">
+        <div className="code-login-brand">
+          <div className="brand-mark">N</div>
+          <div>
+            <div className="eyebrow">GOOGLE AUTHENTICATOR</div>
+            <h1>{hasRememberedWorkspace ? 'Enter your code' : 'Sign in to NMRNL'}</h1>
+          </div>
+        </div>
+
+        <p className="setup-lead code-login-lead">
+          {hasRememberedWorkspace
+            ? 'Open Google Authenticator and enter the current 6-digit NMRNL code.'
+            : 'Enter your Workspace ID once, then use the current 6-digit code from Google Authenticator.'}
         </p>
 
         {error && <div className="error-banner">{error}</div>}
 
-        <button className="primary big auth-create" onClick={create} disabled={busy !== null}>
-          <span className="button-icon">▦</span>
-          <span>
-            <strong>{busy === 'create' ? 'Creating…' : 'Create private workspace'}</strong>
-            <small>Set up Google Authenticator by QR</small>
-          </span>
-        </button>
+        <form className="code-login-form" onSubmit={connect}>
+          {showWorkspaceField ? (
+            <label className="workspace-login-field">
+              Workspace ID
+              <input
+                value={workspaceId}
+                onChange={(event) => setWorkspaceId(event.target.value)}
+                placeholder="16-character workspace ID"
+                autoComplete="username"
+                autoFocus={!rememberedWorkspaceId}
+              />
+            </label>
+          ) : (
+            <div className="remembered-workspace">
+              <span className="remembered-check">✓</span>
+              <span>
+                <strong>NMRNL workspace saved</strong>
+                <small>{workspaceId.slice(0, 4)}••••••••{workspaceId.slice(-4)}</small>
+              </span>
+            </div>
+          )}
 
-        <div className="setup-divider"><span>sign in to an existing workspace</span></div>
-
-        <form className="setup-form" onSubmit={connect}>
-          <label>
-            Workspace ID
+          <label className="code-prompt">
+            <span>Authenticator code</span>
             <input
-              value={workspaceId}
-              onChange={(event) => setWorkspaceId(event.target.value)}
-              placeholder="16-character workspace ID"
-              autoComplete="username"
-            />
-          </label>
-          <label>
-            Google Authenticator code
-            <input
-              className="totp-input compact-code"
+              className="totp-input login-code"
               value={code}
               onChange={(event) => updateCode(event.target.value)}
               placeholder="000000"
               inputMode="numeric"
               autoComplete="one-time-code"
               maxLength={6}
+              autoFocus={hasRememberedWorkspace}
+              aria-label="6-digit Google Authenticator code"
             />
           </label>
-          <button className="secondary" disabled={busy !== null || code.length !== 6}>
-            {busy === 'login' ? 'Checking code…' : 'Open workspace'}
+
+          <button
+            className="primary big open-nmrnl"
+            disabled={
+              busy !== null ||
+              code.length !== 6 ||
+              workspaceId.trim().length !== 16
+            }
+          >
+            {busy === 'login' ? 'Checking code…' : 'Open NMRNL'}
           </button>
         </form>
 
-        <div className="auth-security-note">
+        {rememberedWorkspaceId && (
+          <button
+            type="button"
+            className="switch-workspace-button"
+            onClick={() => {
+              setShowWorkspaceField((value) => !value);
+              setCode('');
+              setError('');
+            }}
+          >
+            {showWorkspaceField ? 'Use saved workspace' : 'Use a different workspace'}
+          </button>
+        )}
+
+        <div className="auth-security-note code-login-note">
           <span>✓</span>
           <p>
-            No permanent owner key is stored in this browser. A successful
-            Authenticator code creates a temporary browser session.
+            Your Workspace ID is remembered on this browser. Your Google
+            Authenticator code is still required whenever a new NMRNL session starts.
           </p>
         </div>
+
+        <div className="setup-divider"><span>new workspace</span></div>
+
+        <button
+          className="secondary big create-secondary"
+          type="button"
+          onClick={create}
+          disabled={busy !== null}
+        >
+          {busy === 'create' ? 'Creating…' : 'Create private workspace'}
+        </button>
       </section>
     </main>
   );
@@ -1391,11 +1445,23 @@ export function App() {
       })
       .catch((reason) => {
         if (!cancelled) {
-          setError(
+          const message =
             reason instanceof Error
               ? reason.message
-              : 'Could not open the saved NMRNL workspace.',
-          );
+              : 'Could not open the saved NMRNL workspace.';
+
+          if (
+            message.toLowerCase().includes('session expired') ||
+            message.toLowerCase().includes('sign in with a new authenticator code')
+          ) {
+            clearCredentials();
+            setState(null);
+            setCredentials(null);
+            setError('');
+            return;
+          }
+
+          setError(message);
         }
       })
       .finally(() => {
