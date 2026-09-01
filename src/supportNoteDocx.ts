@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { goldStandardTemplateContent } from './supportNoteTemplate';
+import { goldStandardTemplateContent, parseStructuredSupportNote } from './supportNoteTemplate';
 import type { WorkEntry } from './model';
 
 export type ExactSupportNoteInput = {
@@ -53,8 +53,6 @@ function safeFilePart(value: string) {
   return value.trim().replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'note';
 }
 async function templateZip() {
-  // This is the same master TEMPLATE.docx used by the original web app. It preserves
-  // the embedded organisation artwork, Word styles, margins, relationships and footer.
   let response: Response | null = null;
   try { response = await fetch(ORIGINAL_TEMPLATE, { cache: 'no-store', mode: 'cors' }); } catch { response = null; }
   if (!response?.ok) response = await fetch('/support-note-template.docx', { cache: 'no-store' });
@@ -80,7 +78,18 @@ export async function downloadExactSupportNoteDocx(input: ExactSupportNoteInput)
 }
 export async function buildSupportNoteDocx(entry: WorkEntry) {
   const content = goldStandardTemplateContent(entry, entry.supportNotePersonName?.trim() || entry.client, entry.supportNoteBreakdown);
-  return buildExactDocx({ client: content.clientName, date: content.date, interaction: content.interactionDetails.replace(/^Interaction:\s*/i, ''), mainTopics: content.mainTopics, outcomes: content.outcomes, overallImpression: content.overallImpression, nextActions: content.nextActions, referrals: entry.supportNoteBreakdown?.referrals ?? '', safetyConcerns: 'No safety concerns noted.' });
+  const sections = parseStructuredSupportNote(entry.supportNoteBreakdown);
+  return buildExactDocx({
+    client: content.clientName,
+    date: content.date,
+    interaction: content.interactionDetails.replace(/^Interaction:\s*/i, ''),
+    mainTopics: content.mainTopics,
+    outcomes: content.outcomes,
+    overallImpression: content.overallImpression,
+    nextActions: content.nextActions,
+    referrals: sections.Referrals,
+    safetyConcerns: 'No safety concerns noted.',
+  });
 }
 export async function downloadSupportNoteDocx(entry: WorkEntry) {
   triggerDownload(await buildSupportNoteDocx(entry), `${safeFilePart(entry.date)}_${safeFilePart(entry.supportNotePersonName?.trim() || entry.client)}_support-note.docx`);
