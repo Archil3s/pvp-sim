@@ -3,9 +3,11 @@ import ReactDOM from 'react-dom/client';
 import { App } from './App';
 import { ReportsHub } from './ReportsHub';
 import { SupportContextHub } from './SupportContextHub';
+import { installExactSupportTemplate } from './exactSupportTemplate';
 import './styles.css';
 import './reportsHub.css';
 import './supportContextHub.css';
+import './exactSupportTemplate.css';
 
 declare const __BUILD_ID__: string;
 
@@ -36,6 +38,7 @@ function watchForSuccessfulDeploy(): () => void {
 }
 
 watchForSuccessfulDeploy();
+installExactSupportTemplate();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
