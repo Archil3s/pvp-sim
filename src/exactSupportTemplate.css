@@ -3,85 +3,96 @@
 }
 
 .exact-template-document {
-  color: #111827;
+  color: #111;
   background: #fff;
   font-family: Arial, Helvetica, sans-serif;
+  font-size: 11pt;
+  line-height: 1.15;
 }
 
 .exact-template-header {
-  padding-bottom: 14px;
-  border-bottom: 2px solid #1f2937;
+  padding: 0;
+  margin: 0;
+  border: 0;
 }
 
 .exact-template-header h3 {
-  margin: 0 0 8px;
-  font-size: clamp(18px, 3.4vw, 24px);
-  line-height: 1.2;
-  color: #0f172a;
+  margin: 0 0 10pt;
+  color: #111;
+  font-size: 14pt;
+  font-weight: 700;
+  line-height: 1.15;
 }
 
-.exact-template-header p,
-.exact-template-details p {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
+.exact-template-header p {
+  margin: 0 0 6pt;
+  color: #111;
+  font-size: 11pt;
+  line-height: 1.15;
 }
 
-.exact-template-details {
-  display: grid;
-  gap: 7px;
-  padding: 16px 0 4px;
+.exact-template-intro {
+  margin-bottom: 12pt !important;
+}
+
+.exact-template-header-gap {
+  display: none;
 }
 
 .exact-template-instruction {
-  margin-top: 8px !important;
+  margin-top: 10pt !important;
+  margin-bottom: 4pt !important;
 }
 
 .exact-template-interaction {
-  padding: 10px 12px;
-  background: #f1f5f9;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  font-weight: 700;
+  margin: 0 0 10pt !important;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-weight: 400;
 }
 
 .exact-template-field {
-  padding-top: 20px;
-  margin-top: 12px;
-  border-top: 1px solid #d8dee8;
+  padding: 0;
+  margin: 14pt 0 0;
+  border: 0;
 }
 
 .exact-template-field-title {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
+  justify-content: flex-start;
+  gap: 6px;
+  margin: 0 0 6pt;
 }
 
 .exact-template-field-title h4 {
   margin: 0;
-  font-size: 16px;
-  color: #0f172a;
+  color: #111;
+  font-size: 11pt;
+  font-weight: 700;
+  line-height: 1.15;
 }
 
 .exact-template-field-title small {
-  color: #526078;
-  font-size: 11px;
+  color: #111;
+  font-size: 11pt;
   font-weight: 700;
+  line-height: 1.15;
 }
 
 .exact-template-field textarea {
   width: 100%;
-  min-height: 112px;
+  min-height: 105px;
   resize: vertical;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  padding: 12px;
+  border: 1px solid #b8b8b8;
+  border-radius: 0;
+  padding: 8px;
   background: #fff;
-  color: #111827;
+  color: #111;
   font: inherit;
-  line-height: 1.5;
+  line-height: 1.3;
 }
 
 .exact-template-field textarea:focus {
@@ -94,14 +105,22 @@
     padding: 16px !important;
   }
 
+  .exact-template-document {
+    font-size: 10.5pt;
+  }
+
   .exact-template-header h3 {
-    font-size: 19px;
+    font-size: 14pt;
+  }
+
+  .exact-template-header p,
+  .exact-template-field-title h4,
+  .exact-template-field-title small {
+    font-size: 10.5pt;
   }
 
   .exact-template-field-title {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 3px;
+    flex-wrap: wrap;
   }
 
   .exact-template-field textarea {
