@@ -79,26 +79,20 @@ function enhancePaper(paper: HTMLElement) {
 
   const header = document.createElement('header');
   header.className = 'exact-template-header';
-  const title = document.createElement('h3');
-  title.textContent = 'Template for reporting of interactions with survivors.';
-  const intro = document.createElement('p');
-  intro.textContent =
-    'This template is aimed at providing information in a format that meets the requirements of the Ministry of Social Development.';
-  header.append(title, intro);
-
-  const details = document.createElement('div');
-  details.className = 'exact-template-details';
-  details.innerHTML = `
+  header.innerHTML = `
+    <h3>Template for reporting of interactions with survivors.</h3>
+    <p class="exact-template-intro">This template is aimed at providing information in a format that meets the requirements of the Ministry of Social Development.</p>
+    <div class="exact-template-header-gap"></div>
     <p><strong>Geographical area.</strong> Blenheim</p>
     <p><strong>Name of client.</strong> ${meta[1] ?? ''}</p>
     <p><strong>Date:</strong> ${meta[2] ?? ''}</p>
     <p class="exact-template-instruction"><strong>${exactInstruction}</strong></p>
     <p class="exact-template-interaction"></p>
   `;
-  const interactionLine = details.querySelector('.exact-template-interaction');
+  const interactionLine = header.querySelector('.exact-template-interaction');
   if (interactionLine) interactionLine.textContent = interaction;
 
-  exact.append(header, details);
+  exact.append(header);
 
   exact.append(
     field(
