@@ -132,3 +132,18 @@ After the Worker is renamed to `nmrnl` in the Cloudflare dashboard, update the W
 ## Google Drive runtime configuration
 
 The Work Google Drive port uses Google Identity Services in the browser and the Drive + Docs APIs. Set the Worker runtime variable `GOOGLE_OAUTH_CLIENT_ID` to the public OAuth Web client ID. The OAuth client must allow the NMRNL production origin as an Authorized JavaScript origin. No Google client secret is exposed to the browser.
+
+
+## Sensitive Work data encryption
+
+NMRNL now supports application-level AES-GCM encryption for sensitive Work fields before they are written to Durable Object storage.
+
+Encrypted fields include client names, entry notes, support-note bodies and person names, follow-up text, active-visit drafts, general action text/client labels, and support-note Drive filenames. Dates, durations, entry types, billing numbers and boolean workflow flags remain plaintext metadata so the Worker can maintain the application efficiently.
+
+Configure a Cloudflare Worker **Secret** named `NMRNL_DATA_ENCRYPTION_KEY`. Use a high-entropy random value of at least 32 characters. Do not add the key to GitHub, `wrangler.jsonc`, source code, screenshots, or chat.
+
+Once the secret is configured, existing legacy plaintext sensitive fields are automatically encrypted on the first workspace read. New writes are encrypted before Durable Object storage. The browser still receives plaintext only after the Worker has decrypted the authenticated workspace snapshot.
+
+**Important:** losing or replacing `NMRNL_DATA_ENCRYPTION_KEY` without a controlled key-rotation migration will make encrypted Work data unreadable. Keep a secure recovery copy outside the app.
+
+The UI exposes only encryption status/version — never the encryption key. While `TEMPORARY_LOGIN_BYPASS` remains enabled, NMRNL deliberately shows a warning and must not be used for real client information.

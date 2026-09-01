@@ -213,6 +213,13 @@ export interface GeneralAction {
   updatedAt: string;
 }
 
+export interface WorkspaceSecurityState {
+  applicationEncryption: boolean;
+  encryptionVersion: number;
+  temporaryLoginBypass: boolean;
+  productionReady: boolean;
+}
+
 export interface WorkspaceState {
   workspaceId: string;
   createdAt: string;
@@ -229,6 +236,7 @@ export interface WorkspaceState {
   drive: DriveConnectionState;
   driveSupportNotes: Record<string, DriveSupportNoteMeta>;
   invoiceDriveFolders: Record<string, InvoiceDriveMeta>;
+  security: WorkspaceSecurityState;
 }
 
 export interface WorkspaceCredentials {

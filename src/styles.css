@@ -4581,3 +4581,94 @@ button.danger-button {
     min-height: 88px;
   }
 }
+
+
+/* Single-worker security status */
+
+.security-warning {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin: 10px 14px 0;
+  border: 1px solid #7b4e20;
+  border-radius: 13px;
+  background: #2d2012;
+  color: #ffe0a3;
+  padding: 10px 12px;
+}
+
+.security-warning-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #ffc857;
+  color: #24190a;
+  font-weight: 950;
+}
+
+.security-warning > div:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+.security-warning strong {
+  font-size: 11px;
+}
+
+.security-warning span {
+  color: #d8b77c;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.security-panel {
+  border-color: #6b4f2b;
+}
+
+.security-panel.ready {
+  border-color: #28674c;
+}
+
+.security-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.security-status-grid > div {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #34405f;
+  border-radius: 11px;
+  background: #151c2b;
+  padding: 10px;
+}
+
+.security-status-grid span {
+  color: #8396c7;
+  font-size: 8px;
+  text-transform: uppercase;
+  font-weight: 850;
+}
+
+.security-status-grid strong {
+  font-size: 11px;
+}
+
+.security-panel.ready .security-status-grid strong {
+  color: #65efa7;
+}
+
+@media (max-width: 620px) {
+  .security-warning {
+    margin-left: 10px;
+    margin-right: 10px;
+  }
+
+  .security-status-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -40,6 +40,9 @@ const RECOVERY_ENROL_TTL_MS = 10 * 60 * 1000;
 const RECOVERY_SEND_COOLDOWN_MS = 60 * 1000;
 const MAX_RECOVERY_ATTEMPTS = 5;
 const ACCOUNT_ACCESS_TTL_MS = 10 * 60 * 1000;
+const DATA_ENCRYPTION_PREFIX = 'nmrnl:enc:v1:';
+const DATA_ENCRYPTION_VERSION = 1;
+const MIN_DATA_ENCRYPTION_SECRET_LENGTH = 32;
 
 function json(value, init = {}) {
   const headers = new Headers(init.headers || {});
@@ -59,6 +62,340 @@ function bytesToHex(bytes) {
 
 function randomToken() {
   return bytesToHex(randomBytes(32));
+}
+
+function bytesToBase64Url(bytes) {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function base64UrlToBytes(value) {
+  const normalized = String(value || '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+function dataEncryptionSecret(env) {
+  return String(env?.NMRNL_DATA_ENCRYPTION_KEY || '').trim();
+}
+
+function dataEncryptionConfigured(env) {
+  return dataEncryptionSecret(env).length >= MIN_DATA_ENCRYPTION_SECRET_LENGTH;
+}
+
+async function dataEncryptionKey(env) {
+  const secret = dataEncryptionSecret(env);
+  if (secret.length < MIN_DATA_ENCRYPTION_SECRET_LENGTH) {
+    throw new Error(
+      'NMRNL data encryption is not configured. Add the NMRNL_DATA_ENCRYPTION_KEY Worker secret.',
+    );
+  }
+
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(secret),
+  );
+
+  return crypto.subtle.importKey(
+    'raw',
+    digest,
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
+function encryptedDataValue(value) {
+  return (
+    typeof value === 'string' &&
+    value.startsWith(DATA_ENCRYPTION_PREFIX)
+  );
+}
+
+async function encryptDataValue(value, env, path) {
+  if (typeof value !== 'string' || !value) return value;
+  if (encryptedDataValue(value)) return value;
+
+  const key = await dataEncryptionKey(env);
+  const iv = randomBytes(12);
+  const ciphertext = new Uint8Array(
+    await crypto.subtle.encrypt(
+      {
+        name: 'AES-GCM',
+        iv,
+        additionalData: new TextEncoder().encode('nmrnl-data|' + path),
+      },
+      key,
+      new TextEncoder().encode(value),
+    ),
+  );
+
+  return (
+    DATA_ENCRYPTION_PREFIX +
+    bytesToBase64Url(iv) +
+    ':' +
+    bytesToBase64Url(ciphertext)
+  );
+}
+
+async function decryptDataValue(value, env, path) {
+  if (!encryptedDataValue(value)) return value;
+
+  const parts = value.slice(DATA_ENCRYPTION_PREFIX.length).split(':');
+  if (parts.length !== 2) {
+    throw new Error('Encrypted NMRNL data is malformed.');
+  }
+
+  const key = await dataEncryptionKey(env);
+  try {
+    const plaintext = await crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: base64UrlToBytes(parts[0]),
+        additionalData: new TextEncoder().encode('nmrnl-data|' + path),
+      },
+      key,
+      base64UrlToBytes(parts[1]),
+    );
+    return new TextDecoder().decode(plaintext);
+  } catch {
+    throw new Error(
+      'NMRNL could not decrypt protected Work data. Check the configured data-encryption key.',
+    );
+  }
+}
+
+function cloneJson(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+async function transformSensitiveData(data, env, transform) {
+  const copy = cloneJson(data) || {};
+
+  if (Array.isArray(copy.clients)) {
+    for (const client of copy.clients) {
+      if (!client || typeof client !== 'object') continue;
+      client.name = await transform(
+        client.name,
+        env,
+        'client:' + String(client.id || 'unknown') + ':name',
+      );
+    }
+  }
+
+  if (Array.isArray(copy.entries)) {
+    for (const entry of copy.entries) {
+      if (!entry || typeof entry !== 'object') continue;
+      const entryId = String(entry.id || 'unknown');
+
+      entry.client = await transform(
+        entry.client,
+        env,
+        'entry:' + entryId + ':client',
+      );
+      entry.supportNoteBreakdown = await transform(
+        entry.supportNoteBreakdown,
+        env,
+        'entry:' + entryId + ':support-note',
+      );
+      entry.supportNotePersonName = await transform(
+        entry.supportNotePersonName,
+        env,
+        'entry:' + entryId + ':support-note-person',
+      );
+
+      if (Array.isArray(entry.notes)) {
+        for (let index = 0; index < entry.notes.length; index += 1) {
+          entry.notes[index] = await transform(
+            entry.notes[index],
+            env,
+            'entry:' + entryId + ':note:' + index,
+          );
+        }
+      }
+
+      if (Array.isArray(entry.nextActions)) {
+        for (const action of entry.nextActions) {
+          if (!action || typeof action !== 'object') continue;
+          action.text = await transform(
+            action.text,
+            env,
+            'entry:' +
+              entryId +
+              ':action:' +
+              String(action.id || 'unknown') +
+              ':text',
+          );
+        }
+      }
+    }
+  }
+
+  if (copy.activeVisit && typeof copy.activeVisit === 'object') {
+    const activeId = String(copy.activeVisit.id || 'unknown');
+    copy.activeVisit.client = await transform(
+      copy.activeVisit.client,
+      env,
+      'active-visit:' + activeId + ':client',
+    );
+    copy.activeVisit.supportNoteDraft = await transform(
+      copy.activeVisit.supportNoteDraft,
+      env,
+      'active-visit:' + activeId + ':support-note-draft',
+    );
+    copy.activeVisit.textSummaryDraft = await transform(
+      copy.activeVisit.textSummaryDraft,
+      env,
+      'active-visit:' + activeId + ':text-summary-draft',
+    );
+    copy.activeVisit.textNextActionsDraft = await transform(
+      copy.activeVisit.textNextActionsDraft,
+      env,
+      'active-visit:' + activeId + ':text-actions-draft',
+    );
+
+    if (Array.isArray(copy.activeVisit.notes)) {
+      for (let index = 0; index < copy.activeVisit.notes.length; index += 1) {
+        copy.activeVisit.notes[index] = await transform(
+          copy.activeVisit.notes[index],
+          env,
+          'active-visit:' + activeId + ':note:' + index,
+        );
+      }
+    }
+  }
+
+  if (Array.isArray(copy.actions)) {
+    for (const action of copy.actions) {
+      if (!action || typeof action !== 'object') continue;
+      const actionId = String(action.id || 'unknown');
+      action.title = await transform(
+        action.title,
+        env,
+        'general-action:' + actionId + ':title',
+      );
+      action.client = await transform(
+        action.client,
+        env,
+        'general-action:' + actionId + ':client',
+      );
+    }
+  }
+
+  if (
+    copy.driveSupportNotes &&
+    typeof copy.driveSupportNotes === 'object' &&
+    !Array.isArray(copy.driveSupportNotes)
+  ) {
+    for (const [entryId, meta] of Object.entries(copy.driveSupportNotes)) {
+      if (!meta || typeof meta !== 'object') continue;
+      meta.fileName = await transform(
+        meta.fileName,
+        env,
+        'drive-support-note:' + entryId + ':file-name',
+      );
+    }
+  }
+
+  return copy;
+}
+
+async function encryptSensitiveData(data, env) {
+  return transformSensitiveData(data, env, encryptDataValue);
+}
+
+async function decryptSensitiveData(data, env) {
+  return transformSensitiveData(data, env, decryptDataValue);
+}
+
+function hasPlainSensitiveValue(value) {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    !encryptedDataValue(value)
+  );
+}
+
+function sensitiveDataNeedsEncryption(data) {
+  if (!data || typeof data !== 'object') return false;
+
+  if (
+    Array.isArray(data.clients) &&
+    data.clients.some((client) => hasPlainSensitiveValue(client?.name))
+  ) {
+    return true;
+  }
+
+  if (
+    Array.isArray(data.entries) &&
+    data.entries.some((entry) => {
+      if (!entry || typeof entry !== 'object') return false;
+      if (
+        hasPlainSensitiveValue(entry.client) ||
+        hasPlainSensitiveValue(entry.supportNoteBreakdown) ||
+        hasPlainSensitiveValue(entry.supportNotePersonName)
+      ) {
+        return true;
+      }
+      if (
+        Array.isArray(entry.notes) &&
+        entry.notes.some(hasPlainSensitiveValue)
+      ) {
+        return true;
+      }
+      return (
+        Array.isArray(entry.nextActions) &&
+        entry.nextActions.some((action) =>
+          hasPlainSensitiveValue(action?.text),
+        )
+      );
+    })
+  ) {
+    return true;
+  }
+
+  if (data.activeVisit && typeof data.activeVisit === 'object') {
+    if (
+      hasPlainSensitiveValue(data.activeVisit.client) ||
+      hasPlainSensitiveValue(data.activeVisit.supportNoteDraft) ||
+      hasPlainSensitiveValue(data.activeVisit.textSummaryDraft) ||
+      hasPlainSensitiveValue(data.activeVisit.textNextActionsDraft) ||
+      (Array.isArray(data.activeVisit.notes) &&
+        data.activeVisit.notes.some(hasPlainSensitiveValue))
+    ) {
+      return true;
+    }
+  }
+
+  if (
+    Array.isArray(data.actions) &&
+    data.actions.some(
+      (action) =>
+        hasPlainSensitiveValue(action?.title) ||
+        hasPlainSensitiveValue(action?.client),
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    data.driveSupportNotes &&
+    typeof data.driveSupportNotes === 'object' &&
+    Object.values(data.driveSupportNotes).some((meta) =>
+      hasPlainSensitiveValue(meta?.fileName),
+    )
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function generateTotpSecret() {
@@ -266,7 +603,7 @@ function normaliseActiveVisit(value) {
 
 function cloneDefaultData() {
   return {
-    version: 3,
+    version: 4,
     clients: [],
     entries: [],
     activeVisit: null,
@@ -308,7 +645,7 @@ function normaliseData(value) {
       : {};
 
   return {
-    version: 3,
+    version: 4,
     clients: Array.isArray(value.clients) ? value.clients : [],
     entries: Array.isArray(value.entries) ? value.entries : [],
     activeVisit: normaliseActiveVisit(value.activeVisit),
@@ -489,11 +826,33 @@ export class SupervisorHub {
   }
 
   async getData() {
-    return normaliseData(await this.state.storage.get('data'));
+    const raw = await this.state.storage.get('data');
+    if (!raw) return cloneDefaultData();
+
+    const decrypted = await decryptSensitiveData(raw, this.env);
+    const normalized = normaliseData(decrypted);
+
+    // Migration path: once the Worker secret exists, any legacy plaintext
+    // sensitive fields are transparently sealed on the first workspace read.
+    if (
+      dataEncryptionConfigured(this.env) &&
+      sensitiveDataNeedsEncryption(raw)
+    ) {
+      await this.state.storage.put(
+        'data',
+        await encryptSensitiveData(normalized, this.env),
+      );
+    }
+
+    return normalized;
   }
 
   async putData(data) {
-    await this.state.storage.put('data', normaliseData(data));
+    const normalized = normaliseData(data);
+    const stored = dataEncryptionConfigured(this.env)
+      ? await encryptSensitiveData(normalized, this.env)
+      : normalized;
+    await this.state.storage.put('data', stored);
   }
 
   async authenticated(request) {
@@ -534,6 +893,13 @@ export class SupervisorHub {
       drive: resolvedData.drive,
       driveSupportNotes: resolvedData.driveSupportNotes,
       invoiceDriveFolders: resolvedData.invoiceDriveFolders,
+      security: {
+        applicationEncryption: dataEncryptionConfigured(this.env),
+        encryptionVersion: DATA_ENCRYPTION_VERSION,
+        temporaryLoginBypass: TEMPORARY_LOGIN_BYPASS,
+        productionReady:
+          dataEncryptionConfigured(this.env) && !TEMPORARY_LOGIN_BYPASS,
+      },
     };
   }
 
@@ -1788,6 +2154,10 @@ export default {
           : 'cloudflare-access+totp',
         accountEmail: ACCOUNT_EMAIL,
         storage: 'durable-object',
+        applicationEncryption: dataEncryptionConfigured(env),
+        encryptionVersion: DATA_ENCRYPTION_VERSION,
+        productionReady:
+          dataEncryptionConfigured(env) && !TEMPORARY_LOGIN_BYPASS,
         now: new Date().toISOString(),
       });
     }

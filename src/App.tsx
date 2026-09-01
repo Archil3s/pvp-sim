@@ -1186,6 +1186,33 @@ function HomeScreen({
         </button>
       )}
 
+      <Panel
+        title="Data Security"
+        subtitle="Single-worker NMRNL protection status"
+        className={state.security.productionReady ? 'security-panel ready' : 'security-panel'}
+      >
+        <div className="security-status-grid">
+          <div>
+            <span>Application encryption</span>
+            <strong>
+              {state.security.applicationEncryption ? 'AES-GCM active' : 'Not configured'}
+            </strong>
+          </div>
+          <div>
+            <span>Login wall</span>
+            <strong>
+              {state.security.temporaryLoginBypass ? 'Bypassed for development' : 'Protected'}
+            </strong>
+          </div>
+          <div>
+            <span>Real client data</span>
+            <strong>
+              {state.security.productionReady ? 'Ready' : 'Do not use yet'}
+            </strong>
+          </div>
+        </div>
+      </Panel>
+
       <Panel title="Today" subtitle={formatDate(todayKey)}>
         <div className="stat-grid compact-stats dashboard-period-stats">
           <StatCard label="Entries" value={String(todayEntries.length)} />
@@ -5977,6 +6004,22 @@ export function App() {
         </header>
 
         {error && <div className="global-error">{error}</div>}
+
+        {!state.security.productionReady && (
+          <div className="security-warning">
+            <div className="security-warning-icon">!</div>
+            <div>
+              <strong>Development security mode</strong>
+              <span>
+                {state.security.temporaryLoginBypass &&
+                  'Login protection is temporarily bypassed. '}
+                {!state.security.applicationEncryption &&
+                  'Application-level data encryption is not configured. '}
+                Do not store real client information until both protections are enabled.
+              </span>
+            </div>
+          </div>
+        )}
 
         <div className="content">
           {section === 'home' && <HomeScreen state={state} mode={mode} go={setSection} />}
