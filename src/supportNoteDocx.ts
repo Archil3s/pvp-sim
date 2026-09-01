@@ -78,7 +78,8 @@ export async function downloadExactSupportNoteDocx(input: ExactSupportNoteInput)
 }
 export async function buildSupportNoteDocx(entry: WorkEntry) {
   const content = goldStandardTemplateContent(entry, entry.supportNotePersonName?.trim() || entry.client, entry.supportNoteBreakdown);
-  const sections = parseStructuredSupportNote(entry.supportNoteBreakdown);
+  const structured = parseStructuredSupportNote(entry.supportNoteBreakdown);
+  const referralsText = structured.Referrals;
   return buildExactDocx({
     client: content.clientName,
     date: content.date,
@@ -87,7 +88,7 @@ export async function buildSupportNoteDocx(entry: WorkEntry) {
     outcomes: content.outcomes,
     overallImpression: content.overallImpression,
     nextActions: content.nextActions,
-    referrals: sections.Referrals,
+    referrals: referralsText,
     safetyConcerns: 'No safety concerns noted.',
   });
 }
