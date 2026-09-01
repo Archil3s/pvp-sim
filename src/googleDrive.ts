@@ -11,7 +11,10 @@ import {
   type SupportNoteStatus,
   type WorkEntry,
 } from './model';
-import { goldStandardTemplatePlainText } from './supportNoteTemplate';
+import {
+  STRUCTURED_SUPPORT_NOTE_TEMPLATE,
+  goldStandardTemplatePlainText,
+} from './supportNoteTemplate';
 
 type GoogleTokenResponse = {
   access_token?: string;
@@ -44,6 +47,12 @@ declare global {
 const GOOGLE_SCRIPT = 'https://accounts.google.com/gsi/client';
 const DRIVE_FOLDER_MIME = 'application/vnd.google-apps.folder';
 const GOOGLE_DOC_MIME = 'application/vnd.google-apps.document';
+const DRIVE_SHORTCUT_MIME = 'application/vnd.google-apps.shortcut';
+const ROOT_FOLDER_NAME = 'NMRNL Work';
+const CLIENT_NOTES_FOLDER_NAME = 'Client Notes';
+const INVOICES_FOLDER_NAME = 'Invoices';
+const TEMPLATES_FOLDER_NAME = 'Templates';
+const SUPPORT_TEMPLATE_NAME = 'Support Note Template';
 const DRIVE_SCOPE = [
   'openid',
   'email',
@@ -55,6 +64,22 @@ const TOKEN_EXPIRY_KEY = 'nmrnl.google-drive-token-expiry.v1';
 
 let scriptPromise: Promise<void> | null = null;
 let clientIdPromise: Promise<string> | null = null;
+
+export type WorkDriveFile = {
+  id: string;
+  name: string;
+  mimeType: string;
+  webViewLink?: string;
+  parents?: string[];
+  shortcutDetails?: { targetId?: string };
+};
+
+export type WorkDriveRepairResult = {
+  drive: DriveConnectionState;
+  templatesFolderId: string;
+  templateFileId: string;
+  repaired: boolean;
+};
 
 function safeJson<T>(text: string): T {
   try {
@@ -68,7 +93,9 @@ async function googleClientId(): Promise<string> {
   if (!clientIdPromise) {
     clientIdPromise = fetch('/api/google/config')
       .then(async (response) => {
-        if (!response.ok) throw new Error('Google Drive configuration is unavailable.');
+        if (!response.ok) {
+          throw new Error('Google Drive configuration is unavailable.');
+        }
         const payload = safeJson<{ clientId?: string }>(await response.text());
         return String(payload.clientId || '').trim();
       })
@@ -142,7 +169,7 @@ function rememberToken(token: string, expiresIn = 3600): void {
       String(Date.now() + Math.max(60, expiresIn) * 1000),
     );
   } catch {
-    // Memory-only OAuth is still usable if session storage is unavailable.
+    // Memory-only OAuth remains usable when session storage is unavailable.
   }
 }
 
@@ -155,7 +182,9 @@ export function disconnectGoogleDrive(): void {
   }
 }
 
-export async function connectGoogleDrive(forceConsent = false): Promise<string> {
+export async function connectGoogleDrive(
+  forceConsent = false,
+): Promise<string> {
   const existing = !forceConsent ? cachedToken() : '';
   if (existing) return existing;
 
@@ -204,7 +233,9 @@ async function googleFetch<T>(
     ...options,
     headers: {
       Authorization: 'Bearer ' + token,
-      ...(options.body ? { 'Content-Type': 'application/json; charset=utf-8' } : {}),
+      ...(options.body
+        ? { 'Content-Type': 'application/json; charset=utf-8' }
+        : {}),
       ...(options.headers || {}),
     },
   });
@@ -213,12 +244,10 @@ async function googleFetch<T>(
   if (!response.ok) {
     let message = raw.trim();
     try {
-      const decoded = JSON.parse(raw) as {
-        error?: { message?: string };
-      };
+      const decoded = JSON.parse(raw) as { error?: { message?: string } };
       message = decoded.error?.message || message;
     } catch {
-      // Keep the raw Google error.
+      // Keep raw Google error text.
     }
 
     if (response.status === 401 || response.status === 403) {
@@ -248,18 +277,32 @@ function driveQueryValue(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
-type DriveFile = {
-  id: string;
-  name: string;
-  mimeType: string;
-  webViewLink?: string;
-};
+async function getDriveFile(
+  token: string,
+  fileId: string,
+): Promise<WorkDriveFile | null> {
+  if (!fileId) return null;
+  try {
+    return await googleFetch<WorkDriveFile>(
+      'https://www.googleapis.com/drive/v3/files/' +
+        encodeURIComponent(fileId) +
+        '?fields=id,name,mimeType,webViewLink,parents,shortcutDetails,trashed',
+      token,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : '';
+    if (message.includes('not found') || message.includes('file not found')) {
+      return null;
+    }
+    throw error;
+  }
+}
 
 async function listNamedChildren(
   token: string,
   parentId: string,
   name: string,
-): Promise<DriveFile[]> {
+): Promise<WorkDriveFile[]> {
   const query =
     "'" +
     driveQueryValue(parentId) +
@@ -268,11 +311,30 @@ async function listNamedChildren(
     "'";
   const params = new URLSearchParams({
     q: query,
-    fields: 'files(id,name,mimeType,webViewLink)',
+    fields:
+      'files(id,name,mimeType,webViewLink,parents,shortcutDetails)',
     spaces: 'drive',
   });
+  const payload = await googleFetch<{ files?: WorkDriveFile[] }>(
+    'https://www.googleapis.com/drive/v3/files?' + params.toString(),
+    token,
+  );
+  return Array.isArray(payload.files) ? payload.files : [];
+}
 
-  const payload = await googleFetch<{ files?: DriveFile[] }>(
+async function listChildren(
+  token: string,
+  parentId: string,
+): Promise<WorkDriveFile[]> {
+  const params = new URLSearchParams({
+    q:
+      "'" + driveQueryValue(parentId) + "' in parents and trashed = false",
+    fields:
+      'files(id,name,mimeType,webViewLink,parents,shortcutDetails)',
+    spaces: 'drive',
+    orderBy: 'folder,name',
+  });
+  const payload = await googleFetch<{ files?: WorkDriveFile[] }>(
     'https://www.googleapis.com/drive/v3/files?' + params.toString(),
     token,
   );
@@ -283,9 +345,9 @@ async function createFolder(
   token: string,
   name: string,
   parentId?: string,
-): Promise<DriveFile> {
-  return googleFetch<DriveFile>(
-    'https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType,webViewLink',
+): Promise<WorkDriveFile> {
+  return googleFetch<WorkDriveFile>(
+    'https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType,webViewLink,parents',
     token,
     {
       method: 'POST',
@@ -302,7 +364,7 @@ async function findOrCreateFolder(
   token: string,
   name: string,
   parentId?: string,
-): Promise<DriveFile> {
+): Promise<WorkDriveFile> {
   if (parentId) {
     const matches = await listNamedChildren(token, parentId, name);
     const folder = matches.find((item) => item.mimeType === DRIVE_FOLDER_MIME);
@@ -315,10 +377,10 @@ async function findOrCreateFolder(
         "' and name = '" +
         driveQueryValue(name) +
         "'",
-      fields: 'files(id,name,mimeType,webViewLink)',
+      fields: 'files(id,name,mimeType,webViewLink,parents)',
       spaces: 'drive',
     });
-    const payload = await googleFetch<{ files?: DriveFile[] }>(
+    const payload = await googleFetch<{ files?: WorkDriveFile[] }>(
       'https://www.googleapis.com/drive/v3/files?' + params.toString(),
       token,
     );
@@ -329,85 +391,55 @@ async function findOrCreateFolder(
   return createFolder(token, name, parentId);
 }
 
-async function ensureDriveSetup(
+async function validFolder(
   token: string,
-  existing?: DriveConnectionState,
-): Promise<DriveConnectionState> {
-  const email = await connectedGoogleEmail(token);
-  let root: DriveFile;
+  fileId: string | undefined,
+  parentId?: string,
+): Promise<WorkDriveFile | null> {
+  if (!fileId) return null;
+  const file = await getDriveFile(token, fileId);
+  if (!file || file.mimeType !== DRIVE_FOLDER_MIME) return null;
+  if (parentId && !(file.parents || []).includes(parentId)) return null;
+  return file;
+}
 
-  if (existing?.rootFolderId) {
-    root = {
-      id: existing.rootFolderId,
-      name: 'NMRNL Work',
-      mimeType: DRIVE_FOLDER_MIME,
-    };
-  } else {
-    root = await findOrCreateFolder(token, 'NMRNL Work');
+async function ensureFolder(
+  token: string,
+  id: string | undefined,
+  name: string,
+  parentId?: string,
+): Promise<{ folder: WorkDriveFile; repaired: boolean }> {
+  const existing = await validFolder(token, id, parentId);
+  if (existing) {
+    if (existing.name !== name) {
+      const renamed = await googleFetch<WorkDriveFile>(
+        'https://www.googleapis.com/drive/v3/files/' +
+          encodeURIComponent(existing.id) +
+          '?fields=id,name,mimeType,webViewLink,parents',
+        token,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ name }),
+        },
+      );
+      return { folder: renamed, repaired: true };
+    }
+    return { folder: existing, repaired: false };
   }
 
-  const clientNotes = existing?.clientNotesFolderId
-    ? {
-        id: existing.clientNotesFolderId,
-        name: 'Client Notes',
-        mimeType: DRIVE_FOLDER_MIME,
-      }
-    : await findOrCreateFolder(token, 'Client Notes', root.id);
-  const invoices = existing?.invoicesFolderId
-    ? {
-        id: existing.invoicesFolderId,
-        name: 'Invoices',
-        mimeType: DRIVE_FOLDER_MIME,
-      }
-    : await findOrCreateFolder(token, 'Invoices', root.id);
-
   return {
-    rootFolderId: root.id,
-    clientNotesFolderId: clientNotes.id,
-    invoicesFolderId: invoices.id,
-    accountEmail: email || existing?.accountEmail || '',
+    folder: await findOrCreateFolder(token, name, parentId),
+    repaired: true,
   };
-}
-
-function cleanName(value: string): string {
-  return value.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim();
-}
-
-function periodStartFor(dateText: string, anchorText: string): Date {
-  const date = new Date(dateText + 'T12:00:00');
-  const anchor = new Date(anchorText + 'T12:00:00');
-  const startUtc = Date.UTC(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
-  const dateUtc = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
-  const days = Math.floor((dateUtc - startUtc) / 86_400_000);
-  const periodOffset = Math.floor(days / 14);
-  return new Date(
-    anchor.getFullYear(),
-    anchor.getMonth(),
-    anchor.getDate() + periodOffset * 14,
-    12,
-  );
-}
-
-function dateKey(date: Date): string {
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 10);
-}
-
-function invoiceNumberForPeriod(dateText: string, anchorText: string): number {
-  const start = periodStartFor(dateText, anchorText);
-  const anchor = periodStartFor(anchorText, anchorText);
-  const startUtc = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
-  const anchorUtc = Date.UTC(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
-  return 5 + Math.floor((startUtc - anchorUtc) / 86_400_000 / 14);
 }
 
 async function createGoogleDoc(
   token: string,
   name: string,
   parentId: string,
-): Promise<DriveFile> {
-  return googleFetch<DriveFile>(
-    'https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType,webViewLink',
+): Promise<WorkDriveFile> {
+  return googleFetch<WorkDriveFile>(
+    'https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType,webViewLink,parents',
     token,
     {
       method: 'POST',
@@ -428,7 +460,8 @@ async function replaceGoogleDocText(
   const document = await googleFetch<{
     body?: { content?: Array<{ endIndex?: number }> };
   }>(
-    'https://docs.googleapis.com/v1/documents/' + encodeURIComponent(documentId),
+    'https://docs.googleapis.com/v1/documents/' +
+      encodeURIComponent(documentId),
     token,
   );
 
@@ -438,18 +471,13 @@ async function replaceGoogleDocText(
     1,
   );
   const requests: Array<Record<string, unknown>> = [];
-
   if (lastEndIndex > 2) {
     requests.push({
       deleteContentRange: {
-        range: {
-          startIndex: 1,
-          endIndex: lastEndIndex - 1,
-        },
+        range: { startIndex: 1, endIndex: lastEndIndex - 1 },
       },
     });
   }
-
   requests.push({
     insertText: {
       location: { index: 1 },
@@ -465,6 +493,195 @@ async function replaceGoogleDocText(
     {
       method: 'POST',
       body: JSON.stringify({ requests }),
+    },
+  );
+}
+
+async function ensureDefaultTemplate(
+  token: string,
+  templatesFolderId: string,
+): Promise<{ file: WorkDriveFile; repaired: boolean }> {
+  const matches = await listNamedChildren(
+    token,
+    templatesFolderId,
+    SUPPORT_TEMPLATE_NAME,
+  );
+  let file = matches.find((item) => item.mimeType === GOOGLE_DOC_MIME);
+  let repaired = false;
+  if (!file) {
+    file = await createGoogleDoc(token, SUPPORT_TEMPLATE_NAME, templatesFolderId);
+    repaired = true;
+  }
+
+  await replaceGoogleDocText(
+    token,
+    file.id,
+    [
+      'NMRNL Work Support Note Template',
+      '',
+      'Template for reporting of interactions with survivors.',
+      'Geographical area. Blenheim',
+      '',
+      STRUCTURED_SUPPORT_NOTE_TEMPLATE,
+      '',
+      'Reporting limits',
+      'Main topic(s): max. 200 words',
+      'Outcome(s): max. 100 words',
+      'Overall impression: max. 150 words',
+      'Next actions: max. 150 words',
+    ].join('\n'),
+  );
+
+  return { file, repaired };
+}
+
+async function ensureDriveSetupWithToken(
+  token: string,
+  existing?: DriveConnectionState,
+): Promise<WorkDriveRepairResult> {
+  const email = await connectedGoogleEmail(token);
+
+  const rootResult = await ensureFolder(
+    token,
+    existing?.rootFolderId,
+    ROOT_FOLDER_NAME,
+  );
+  const clientResult = await ensureFolder(
+    token,
+    existing?.clientNotesFolderId,
+    CLIENT_NOTES_FOLDER_NAME,
+    rootResult.folder.id,
+  );
+  const invoiceResult = await ensureFolder(
+    token,
+    existing?.invoicesFolderId,
+    INVOICES_FOLDER_NAME,
+    rootResult.folder.id,
+  );
+  const templateResult = await ensureFolder(
+    token,
+    undefined,
+    TEMPLATES_FOLDER_NAME,
+    rootResult.folder.id,
+  );
+  const templateFile = await ensureDefaultTemplate(
+    token,
+    templateResult.folder.id,
+  );
+
+  return {
+    drive: {
+      rootFolderId: rootResult.folder.id,
+      clientNotesFolderId: clientResult.folder.id,
+      invoicesFolderId: invoiceResult.folder.id,
+      accountEmail: email || existing?.accountEmail || '',
+    },
+    templatesFolderId: templateResult.folder.id,
+    templateFileId: templateFile.file.id,
+    repaired:
+      rootResult.repaired ||
+      clientResult.repaired ||
+      invoiceResult.repaired ||
+      templateResult.repaired ||
+      templateFile.repaired,
+  };
+}
+
+export async function repairWorkDrive(
+  existing?: DriveConnectionState,
+): Promise<WorkDriveRepairResult> {
+  const token = await connectGoogleDrive();
+  return ensureDriveSetupWithToken(token, existing);
+}
+
+export async function listWorkDriveRoot(
+  existing?: DriveConnectionState,
+): Promise<{
+  repair: WorkDriveRepairResult;
+  rootFiles: WorkDriveFile[];
+  templateFiles: WorkDriveFile[];
+}> {
+  const token = await connectGoogleDrive();
+  const repair = await ensureDriveSetupWithToken(token, existing);
+  return {
+    repair,
+    rootFiles: await listChildren(token, repair.drive.rootFolderId),
+    templateFiles: await listChildren(token, repair.templatesFolderId),
+  };
+}
+
+function cleanName(value: string): string {
+  return value
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function periodStartFor(dateText: string, anchorText: string): Date {
+  const date = new Date(dateText + 'T12:00:00');
+  const anchor = new Date(anchorText + 'T12:00:00');
+  const startUtc = Date.UTC(
+    anchor.getFullYear(),
+    anchor.getMonth(),
+    anchor.getDate(),
+  );
+  const dateUtc = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  const days = Math.floor((dateUtc - startUtc) / 86_400_000);
+  const periodOffset = Math.floor(days / 14);
+  return new Date(
+    anchor.getFullYear(),
+    anchor.getMonth(),
+    anchor.getDate() + periodOffset * 14,
+    12,
+  );
+}
+
+function dateKey(date: Date): string {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
+function invoiceNumberForPeriod(dateText: string, anchorText: string): number {
+  const start = periodStartFor(dateText, anchorText);
+  const anchor = periodStartFor(anchorText, anchorText);
+  const startUtc = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const anchorUtc = Date.UTC(
+    anchor.getFullYear(),
+    anchor.getMonth(),
+    anchor.getDate(),
+  );
+  return 5 + Math.floor((startUtc - anchorUtc) / 86_400_000 / 14);
+}
+
+async function canonicaliseFile(
+  token: string,
+  file: WorkDriveFile,
+  name: string,
+  parentId: string,
+): Promise<WorkDriveFile> {
+  const currentParents = file.parents || [];
+  const needsParentMove =
+    !currentParents.includes(parentId) || currentParents.length !== 1;
+  const needsRename = file.name !== name;
+  if (!needsParentMove && !needsRename) return file;
+
+  const params = new URLSearchParams({
+    fields: 'id,name,mimeType,webViewLink,parents',
+  });
+  if (needsParentMove) {
+    params.set('addParents', parentId);
+    if (currentParents.length) params.set('removeParents', currentParents.join(','));
+  }
+
+  return googleFetch<WorkDriveFile>(
+    'https://www.googleapis.com/drive/v3/files/' +
+      encodeURIComponent(file.id) +
+      '?' +
+      params.toString(),
+    token,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(needsRename ? { name } : {}),
     },
   );
 }
@@ -495,7 +712,8 @@ export async function syncSupportNoteToDrive(input: {
   meta: DriveSupportNoteMeta;
 }> {
   const token = await connectGoogleDrive();
-  const drive = await ensureDriveSetup(token, input.drive);
+  const repaired = await ensureDriveSetupWithToken(token, input.drive);
+  const drive = repaired.drive;
 
   const clientFolder = await findOrCreateFolder(
     token,
@@ -535,26 +753,21 @@ export async function syncSupportNoteToDrive(input: {
       ' - ' +
       entryType(input.entry.type).label,
   );
-  let file: DriveFile;
 
+  let file: WorkDriveFile | null = null;
   if (input.existingMeta?.fileId) {
-    file = {
-      id: input.existingMeta.fileId,
-      name: input.existingMeta.fileName || fileName,
-      mimeType: GOOGLE_DOC_MIME,
-      webViewLink: input.existingMeta.webViewLink,
-    };
-  } else {
-    const matches = await listNamedChildren(token, typeFolder.id, fileName);
-    const existing = matches.find((item) => item.mimeType === GOOGLE_DOC_MIME);
-    file = existing || (await createGoogleDoc(token, fileName, typeFolder.id));
+    const candidate = await getDriveFile(token, input.existingMeta.fileId);
+    if (candidate?.mimeType === GOOGLE_DOC_MIME) file = candidate;
   }
 
-  await replaceGoogleDocText(
-    token,
-    file.id,
-    supportNoteDocumentText(input),
-  );
+  if (!file) {
+    const matches = await listNamedChildren(token, typeFolder.id, fileName);
+    file = matches.find((item) => item.mimeType === GOOGLE_DOC_MIME) || null;
+  }
+  if (!file) file = await createGoogleDoc(token, fileName, typeFolder.id);
+
+  file = await canonicaliseFile(token, file, fileName, typeFolder.id);
+  await replaceGoogleDocText(token, file.id, supportNoteDocumentText(input));
 
   return {
     drive,
@@ -579,8 +792,18 @@ async function createShortcut(
   parentId: string,
 ): Promise<void> {
   const matches = await listNamedChildren(token, parentId, name);
-  if (matches.some((item) => item.mimeType === 'application/vnd.google-apps.shortcut')) {
-    return;
+  const shortcut = matches.find(
+    (item) => item.mimeType === DRIVE_SHORTCUT_MIME,
+  );
+  if (shortcut?.shortcutDetails?.targetId === targetId) return;
+
+  if (shortcut && shortcut.shortcutDetails?.targetId !== targetId) {
+    await googleFetch(
+      'https://www.googleapis.com/drive/v3/files/' +
+        encodeURIComponent(shortcut.id),
+      token,
+      { method: 'DELETE' },
+    );
   }
 
   await googleFetch(
@@ -590,7 +813,7 @@ async function createShortcut(
       method: 'POST',
       body: JSON.stringify({
         name,
-        mimeType: 'application/vnd.google-apps.shortcut',
+        mimeType: DRIVE_SHORTCUT_MIME,
         parents: [parentId],
         shortcutDetails: { targetId },
       }),
@@ -619,7 +842,8 @@ function invoiceSummaryText(input: {
     0,
   );
   const travel = input.entries.reduce(
-    (sum, entry) => sum + entryTravelReimbursement(entry, input.fuelRate),
+    (sum, entry) =>
+      sum + entryTravelReimbursement(entry, input.fuelRate),
     0,
   );
 
@@ -677,7 +901,8 @@ export async function syncInvoicePeriodToDrive(input: {
   supportNoteMetas: Record<string, DriveSupportNoteMeta>;
 }> {
   const token = await connectGoogleDrive();
-  const drive = await ensureDriveSetup(token, input.drive);
+  const repaired = await ensureDriveSetupWithToken(token, input.drive);
+  const drive = repaired.drive;
   const folderName =
     'Invoice ' +
     input.invoiceNumber +
@@ -685,25 +910,41 @@ export async function syncInvoicePeriodToDrive(input: {
     input.startKey +
     ' to ' +
     input.endKey;
-  const folder = input.existingInvoice?.folderId
-    ? {
-        id: input.existingInvoice.folderId,
-        name: folderName,
-        mimeType: DRIVE_FOLDER_MIME,
-        webViewLink: input.existingInvoice.webViewLink,
-      }
-    : await findOrCreateFolder(token, folderName, drive.invoicesFolderId);
+
+  let folder: WorkDriveFile | null = null;
+  if (input.existingInvoice?.folderId) {
+    const candidate = await getDriveFile(token, input.existingInvoice.folderId);
+    if (
+      candidate?.mimeType === DRIVE_FOLDER_MIME &&
+      (candidate.parents || []).includes(drive.invoicesFolderId)
+    ) {
+      folder = candidate;
+    }
+  }
+  if (!folder) {
+    folder = await findOrCreateFolder(token, folderName, drive.invoicesFolderId);
+  }
+  folder = await canonicaliseFile(token, folder, folderName, drive.invoicesFolderId);
 
   const summaryName = 'Invoice ' + input.invoiceNumber + ' Summary';
-  const summaryMatches = await listNamedChildren(token, folder.id, summaryName);
-  const summaryDoc =
-    summaryMatches.find((item) => item.mimeType === GOOGLE_DOC_MIME) ||
-    (await createGoogleDoc(token, summaryName, folder.id));
-  await replaceGoogleDocText(
-    token,
-    summaryDoc.id,
-    invoiceSummaryText(input),
-  );
+  let summaryDoc: WorkDriveFile | null = null;
+  if (input.existingInvoice?.summaryFileId) {
+    const candidate = await getDriveFile(
+      token,
+      input.existingInvoice.summaryFileId,
+    );
+    if (candidate?.mimeType === GOOGLE_DOC_MIME) summaryDoc = candidate;
+  }
+  if (!summaryDoc) {
+    const summaryMatches = await listNamedChildren(token, folder.id, summaryName);
+    summaryDoc =
+      summaryMatches.find((item) => item.mimeType === GOOGLE_DOC_MIME) || null;
+  }
+  if (!summaryDoc) {
+    summaryDoc = await createGoogleDoc(token, summaryName, folder.id);
+  }
+  summaryDoc = await canonicaliseFile(token, summaryDoc, summaryName, folder.id);
+  await replaceGoogleDocText(token, summaryDoc.id, invoiceSummaryText(input));
 
   const metas: Record<string, DriveSupportNoteMeta> = {
     ...input.supportNoteMetas,
