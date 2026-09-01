@@ -2,6 +2,18 @@ import JSZip from 'jszip';
 import { goldStandardTemplateContent } from './supportNoteTemplate';
 import type { WorkEntry } from './model';
 
+export type ExactSupportNoteInput = {
+  client: string;
+  date: string;
+  interaction: string;
+  mainTopics: string;
+  outcomes: string;
+  overallImpression: string;
+  nextActions: string;
+  referrals?: string;
+  safetyConcerns?: string;
+};
+
 function escapeXml(value: string) {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
 }
@@ -17,7 +29,7 @@ function replaceTemplateParagraphText(paragraph: string, value: string) {
   return `${opening}${props}${runXml(value)}</w:p>`;
 }
 
-function populateTemplate(xml: string, entry: WorkEntry) {
+function populateExactTemplate(xml: string, input: ExactSupportNoteInput) {
   const bodyOpen = '<w:body>';
   const bodyClose = '</w:body>';
   const bodyStart = xml.indexOf(bodyOpen);
@@ -30,15 +42,18 @@ function populateTemplate(xml: string, entry: WorkEntry) {
   const sectionProperties = [...body.matchAll(/<w:sectPr[\s\S]*?<\/w:sectPr>/g)].at(-1)?.[0] ?? '';
   if (paragraphs.length < 19) throw new Error('Support-note template layout has changed.');
 
-  const content = goldStandardTemplateContent(entry, entry.supportNotePersonName?.trim() || entry.client, entry.supportNoteBreakdown);
-  const populated = paragraphs.slice(0, 19);
-  populated[7] = replaceTemplateParagraphText(paragraphs[7], `Name of client. ${content.clientName}`);
-  populated[8] = replaceTemplateParagraphText(paragraphs[8], `Date: ${content.date}`);
-  populated[10] = replaceTemplateParagraphText(paragraphs[10], content.interactionDetails);
-  populated[12] = replaceTemplateParagraphText(paragraphs[12], content.mainTopics);
-  populated[14] = replaceTemplateParagraphText(paragraphs[14], content.outcomes);
-  populated[16] = replaceTemplateParagraphText(paragraphs[16], content.overallImpression);
-  populated[18] = replaceTemplateParagraphText(paragraphs[18], content.nextActions);
+  const populated = [...paragraphs];
+  populated[7] = replaceTemplateParagraphText(paragraphs[7], `Name of client: ${input.client}`);
+  populated[8] = replaceTemplateParagraphText(paragraphs[8], `Date: ${input.date}`);
+  populated[9] = replaceTemplateParagraphText(paragraphs[9], `Interaction: ${input.interaction}`);
+  populated[11] = replaceTemplateParagraphText(paragraphs[11], input.mainTopics);
+  populated[13] = replaceTemplateParagraphText(paragraphs[13], input.outcomes);
+  populated[15] = replaceTemplateParagraphText(paragraphs[15], input.overallImpression);
+  populated[17] = replaceTemplateParagraphText(paragraphs[17], input.nextActions);
+
+  // The supplied template contains Referrals and Safety sections after the four main fields.
+  if (paragraphs[19] && input.referrals !== undefined) populated[19] = replaceTemplateParagraphText(paragraphs[19], input.referrals);
+  if (paragraphs[22] && input.safetyConcerns) populated[22] = replaceTemplateParagraphText(paragraphs[22], input.safetyConcerns);
 
   return `${prefix}${populated.join('')}${sectionProperties}${bodyClose}</w:document>`;
 }
@@ -47,15 +62,17 @@ function safeFilePart(value: string) {
   return value.trim().replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'note';
 }
 
-export async function buildSupportNoteDocx(entry: WorkEntry) {
+async function templateZip() {
   const response = await fetch('/support-note-template.docx', { cache: 'no-store' });
-  if (!response.ok) throw new Error('Gold-standard support-note template could not be loaded.');
+  if (!response.ok) throw new Error(`Support-note template could not be loaded (${response.status}).`);
+  return JSZip.loadAsync(await response.arrayBuffer());
+}
 
-  const zip = await JSZip.loadAsync(await response.arrayBuffer());
+async function buildExactDocx(input: ExactSupportNoteInput) {
+  const zip = await templateZip();
   const documentFile = zip.file('word/document.xml');
-  if (!documentFile) throw new Error('Gold-standard support-note template is missing document.xml.');
-  zip.file('word/document.xml', populateTemplate(await documentFile.async('string'), entry));
-
+  if (!documentFile) throw new Error('Support-note template is missing word/document.xml.');
+  zip.file('word/document.xml', populateExactTemplate(await documentFile.async('string'), input));
   return zip.generateAsync({
     type: 'blob',
     mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -63,14 +80,39 @@ export async function buildSupportNoteDocx(entry: WorkEntry) {
   });
 }
 
-export async function downloadSupportNoteDocx(entry: WorkEntry) {
-  const blob = await buildSupportNoteDocx(entry);
+function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `${safeFilePart(entry.date)}_${safeFilePart(entry.supportNotePersonName?.trim() || entry.client)}_support-note.docx`;
-  document.body.append(anchor);
+  anchor.download = filename;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+export async function downloadExactSupportNoteDocx(input: ExactSupportNoteInput) {
+  const blob = await buildExactDocx(input);
+  triggerDownload(blob, `${safeFilePart(input.date)}_${safeFilePart(input.client)}_support-note.docx`);
+}
+
+export async function buildSupportNoteDocx(entry: WorkEntry) {
+  const content = goldStandardTemplateContent(entry, entry.supportNotePersonName?.trim() || entry.client, entry.supportNoteBreakdown);
+  return buildExactDocx({
+    client: content.clientName,
+    date: content.date,
+    interaction: content.interactionDetails.replace(/^Interaction:\s*/i, ''),
+    mainTopics: content.mainTopics,
+    outcomes: content.outcomes,
+    overallImpression: content.overallImpression,
+    nextActions: content.nextActions,
+    referrals: entry.supportNoteBreakdown?.referrals ?? '',
+    safetyConcerns: 'No safety concerns noted.',
+  });
+}
+
+export async function downloadSupportNoteDocx(entry: WorkEntry) {
+  const blob = await buildSupportNoteDocx(entry);
+  triggerDownload(blob, `${safeFilePart(entry.date)}_${safeFilePart(entry.supportNotePersonName?.trim() || entry.client)}_support-note.docx`);
 }
