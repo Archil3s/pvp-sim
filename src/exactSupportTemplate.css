@@ -1,130 +1,74 @@
-.exact-template-source > :not(.exact-template-document) {
-  display: none !important;
-}
+.exact-template-source > :not(.exact-template-document) { display: none !important; }
 
 .exact-template-document {
-  color: #111;
+  color: #000;
   background: #fff;
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 11pt;
-  line-height: 1.15;
-}
-
-.exact-template-header {
+  font-size: 12pt;
+  line-height: 1.08;
   padding: 0;
-  margin: 0;
-  border: 0;
 }
 
-.exact-template-header h3 {
-  margin: 0 0 10pt;
-  color: #111;
-  font-size: 14pt;
+.exact-template-logo {
+  display: block;
+  width: 202px;
+  height: auto;
+  margin: 0 auto 8px;
+}
+
+.exact-template-title {
+  margin: 0 0 42px;
+  text-align: center;
+  color: #000;
+  font-size: 20pt;
   font-weight: 700;
-  line-height: 1.15;
-}
-
-.exact-template-header p {
-  margin: 0 0 6pt;
-  color: #111;
-  font-size: 11pt;
-  line-height: 1.15;
+  line-height: 1.1;
 }
 
 .exact-template-intro {
-  margin-bottom: 12pt !important;
-}
-
-.exact-template-header-gap {
-  display: none;
-}
-
-.exact-template-instruction {
-  margin-top: 10pt !important;
-  margin-bottom: 4pt !important;
-}
-
-.exact-template-interaction {
-  margin: 0 0 10pt !important;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  font-weight: 400;
-}
-
-.exact-template-field {
-  padding: 0;
-  margin: 14pt 0 0;
-  border: 0;
-}
-
-.exact-template-field-title {
-  display: flex;
-  align-items: baseline;
-  justify-content: flex-start;
-  gap: 6px;
-  margin: 0 0 6pt;
-}
-
-.exact-template-field-title h4 {
-  margin: 0;
-  color: #111;
-  font-size: 11pt;
-  font-weight: 700;
+  margin: 0 0 28px;
+  color: #000;
+  font-size: 12pt;
   line-height: 1.15;
 }
 
-.exact-template-field-title small {
-  color: #111;
-  font-size: 11pt;
-  font-weight: 700;
-  line-height: 1.15;
-}
+.exact-template-details { margin: 0 0 24px; }
+.exact-template-details p { margin: 0 0 8px; color: #000; font-size: 12pt; line-height: 1.1; }
+
+.exact-template-field { margin: 0 0 20px; padding: 0; border: 0; }
+.exact-template-field-title { margin: 0 0 9px; color: #000; font-size: 12pt; line-height: 1.1; font-weight: 400; }
+.exact-template-field-title-bold { font-weight: 700; }
 
 .exact-template-field textarea {
+  display: block;
   width: 100%;
-  min-height: 105px;
+  min-height: 72px;
+  box-sizing: border-box;
   resize: vertical;
-  border: 1px solid #b8b8b8;
+  border: 0;
   border-radius: 0;
-  padding: 8px;
+  padding: 3px 0;
   background: #fff;
-  color: #111;
+  color: #000;
   font: inherit;
-  line-height: 1.3;
+  line-height: 1.25;
 }
 
-.exact-template-field textarea:focus {
-  outline: 2px solid #4f8df7;
-  outline-offset: 1px;
+.exact-template-field textarea:hover { background: #fafafa; }
+.exact-template-field textarea:focus { outline: 1px solid #bbb; outline-offset: 3px; }
+
+@media (min-width: 700px) {
+  .gold-template-paper { max-width: 794px; margin-left: auto; margin-right: auto; padding: 72px 96px 48px !important; }
 }
 
 @media (max-width: 640px) {
-  .gold-template-paper {
-    padding: 16px !important;
-  }
+  .gold-template-paper { padding: 22px 18px !important; }
+  .exact-template-logo { width: 165px; }
+  .exact-template-title { margin-bottom: 32px; font-size: 18pt; }
+  .exact-template-document, .exact-template-intro, .exact-template-details p, .exact-template-field-title { font-size: 11pt; }
+  .exact-template-field textarea { min-height: 100px; font-size: 16px; }
+}
 
-  .exact-template-document {
-    font-size: 10.5pt;
-  }
-
-  .exact-template-header h3 {
-    font-size: 14pt;
-  }
-
-  .exact-template-header p,
-  .exact-template-field-title h4,
-  .exact-template-field-title small {
-    font-size: 10.5pt;
-  }
-
-  .exact-template-field-title {
-    flex-wrap: wrap;
-  }
-
-  .exact-template-field textarea {
-    min-height: 128px;
-    font-size: 16px;
-  }
+@media print {
+  .exact-template-field textarea { overflow: visible; min-height: 72px; }
 }
