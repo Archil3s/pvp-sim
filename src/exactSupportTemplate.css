@@ -1,74 +1,101 @@
 .exact-template-source > :not(.exact-template-document) { display: none !important; }
 
 .exact-template-document {
-  color: #000;
-  background: #fff;
+  color: #fff;
+  background: #1b1b1b;
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 12pt;
-  line-height: 1.08;
+  font-size: 12px;
+  line-height: 1.35;
   padding: 0;
+}
+
+.exact-template-top {
+  display: grid;
+  grid-template-columns: 175px 1fr;
+  align-items: center;
+  column-gap: 64px;
+  margin: 0 0 42px;
 }
 
 .exact-template-logo {
   display: block;
-  width: 202px;
+  width: 175px;
   height: auto;
-  margin: 0 auto 8px;
+  margin: 0;
 }
 
 .exact-template-title {
-  margin: 0 0 42px;
-  text-align: center;
-  color: #000;
-  font-size: 20pt;
+  margin: 0;
+  max-width: 330px;
+  white-space: pre-line;
+  text-align: left;
+  color: #fff;
+  font-size: 20px;
   font-weight: 700;
-  line-height: 1.1;
+  line-height: 1.55;
 }
 
 .exact-template-intro {
-  margin: 0 0 28px;
-  color: #000;
-  font-size: 12pt;
-  line-height: 1.15;
+  margin: 0 0 38px;
+  white-space: pre-line;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
-.exact-template-details { margin: 0 0 24px; }
-.exact-template-details p { margin: 0 0 8px; color: #000; font-size: 12pt; line-height: 1.1; }
+.exact-template-details { margin: 0 0 42px; }
+.exact-template-details p { margin: 0 0 10px; color: #fff; font-size: 12px; line-height: 1.25; }
 
-.exact-template-field { margin: 0 0 20px; padding: 0; border: 0; }
-.exact-template-field-title { margin: 0 0 9px; color: #000; font-size: 12pt; line-height: 1.1; font-weight: 400; }
-.exact-template-field-title-bold { font-weight: 700; }
+.exact-template-field { margin: 0 0 27px; padding: 0; border: 0; }
+.exact-template-field-title { margin: 0 0 8px; color: #fff; font-size: 12px; line-height: 1.25; font-weight: 400; }
 
 .exact-template-field textarea {
   display: block;
   width: 100%;
-  min-height: 72px;
+  min-height: 38px;
   box-sizing: border-box;
   resize: vertical;
   border: 0;
   border-radius: 0;
-  padding: 3px 0;
-  background: #fff;
-  color: #000;
+  padding: 0;
+  background: transparent;
+  color: #fff;
   font: inherit;
-  line-height: 1.25;
+  line-height: 1.35;
 }
 
-.exact-template-field textarea:hover { background: #fafafa; }
-.exact-template-field textarea:focus { outline: 1px solid #bbb; outline-offset: 3px; }
+.exact-template-field textarea:hover { background: rgba(255,255,255,.025); }
+.exact-template-field textarea:focus { outline: 1px solid #555; outline-offset: 4px; }
+
+.exact-template-static-section { margin: 0 0 16px; }
+.exact-template-static-title { margin: 0 0 9px; color: #fff; font-size: 12px; font-weight: 700; line-height: 1.25; }
+.exact-template-static-body { color: #fff; font-size: 12px; line-height: 1.25; }
 
 @media (min-width: 700px) {
-  .gold-template-paper { max-width: 794px; margin-left: auto; margin-right: auto; padding: 72px 96px 48px !important; }
+  .gold-template-paper {
+    max-width: 626px;
+    min-height: 720px;
+    margin-left: auto;
+    margin-right: auto;
+    padding: 8px 8px 18px !important;
+    background: #1b1b1b !important;
+    border-radius: 0 !important;
+  }
 }
 
 @media (max-width: 640px) {
-  .gold-template-paper { padding: 22px 18px !important; }
-  .exact-template-logo { width: 165px; }
-  .exact-template-title { margin-bottom: 32px; font-size: 18pt; }
-  .exact-template-document, .exact-template-intro, .exact-template-details p, .exact-template-field-title { font-size: 11pt; }
-  .exact-template-field textarea { min-height: 100px; font-size: 16px; }
+  .gold-template-paper { padding: 10px !important; background: #1b1b1b !important; }
+  .exact-template-top { grid-template-columns: 145px 1fr; column-gap: 22px; margin-bottom: 32px; }
+  .exact-template-logo { width: 145px; }
+  .exact-template-title { font-size: 16px; line-height: 1.45; }
+  .exact-template-intro, .exact-template-details p, .exact-template-field-title,
+  .exact-template-field textarea, .exact-template-static-title, .exact-template-static-body { font-size: 12px; }
+  .exact-template-field textarea { min-height: 54px; }
 }
 
 @media print {
-  .exact-template-field textarea { overflow: visible; min-height: 72px; }
+  .gold-template-paper, .exact-template-document { background: #fff !important; color: #000 !important; }
+  .exact-template-title, .exact-template-intro, .exact-template-details p, .exact-template-field-title,
+  .exact-template-field textarea, .exact-template-static-title, .exact-template-static-body { color: #000 !important; }
+  .exact-template-field textarea { overflow: visible; }
 }
