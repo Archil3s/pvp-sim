@@ -1,7 +1,9 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
+import { ReportsHub } from './ReportsHub';
 import './styles.css';
+import './reportsHub.css';
 
 declare const __BUILD_ID__: string;
 
@@ -36,5 +38,6 @@ watchForSuccessfulDeploy();
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
+    <ReportsHub />
   </React.StrictMode>,
 );
