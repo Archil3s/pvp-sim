@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "node scripts/verify-build-source.mjs && tsc --noEmit && vite build",
     "preview": "vite preview",
     "cloudflare:access": "node scripts/configure-cloudflare-access.mjs"
   },
