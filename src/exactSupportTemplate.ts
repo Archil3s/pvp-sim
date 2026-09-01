@@ -15,23 +15,34 @@ function combine(...values: Array<string | undefined>) {
   return values.map((value) => value?.trim() ?? '').filter(Boolean).join('\n\n');
 }
 
-function editableField(
-  heading: string,
-  value: string,
-  onCommit: (value: string) => void,
-  bold = false,
-) {
+function editableField(heading: string, value: string, onCommit: (value: string) => void) {
   const section = document.createElement('section');
   section.className = 'exact-template-field';
   const title = document.createElement('div');
-  title.className = `exact-template-field-title${bold ? ' exact-template-field-title-bold' : ''}`;
+  title.className = 'exact-template-field-title';
   title.textContent = heading;
   const textarea = document.createElement('textarea');
   textarea.value = value;
-  textarea.rows = heading.startsWith('Main topic') ? 7 : 5;
+  textarea.rows = heading.startsWith('Main topic') ? 5 : 3;
   textarea.setAttribute('aria-label', heading);
   textarea.addEventListener('change', () => onCommit(textarea.value));
   section.append(title, textarea);
+  return section;
+}
+
+function staticSection(heading: string, value = '') {
+  const section = document.createElement('section');
+  section.className = 'exact-template-static-section';
+  const title = document.createElement('div');
+  title.className = 'exact-template-static-title';
+  title.textContent = heading;
+  section.append(title);
+  if (value) {
+    const body = document.createElement('div');
+    body.className = 'exact-template-static-body';
+    body.textContent = value;
+    section.append(body);
+  }
   return section;
 }
 
@@ -77,18 +88,20 @@ function enhancePaper(paper: HTMLElement) {
   const exact = document.createElement('div');
   exact.className = 'exact-template-document';
 
+  const top = document.createElement('div');
+  top.className = 'exact-template-top';
   const logo = document.createElement('img');
   logo.className = 'exact-template-logo';
   logo.src = '/support-note-header.png';
   logo.alt = 'Male Room and Tautoko Tāne Male Survivors Aotearoa';
-
   const title = document.createElement('h3');
   title.className = 'exact-template-title';
-  title.textContent = 'Template for reporting of interactions with survivors.';
+  title.textContent = 'Template for reporting of\ninteractions with survivors.';
+  top.append(logo, title);
 
   const intro = document.createElement('p');
   intro.className = 'exact-template-intro';
-  intro.textContent = 'This template is aimed at providing information in a format that meets the requirements of the Ministry of Social Development.';
+  intro.textContent = 'This template is aimed at providing information in a format that meets the requirements of\nthe Ministry of Social Development.';
 
   const details = document.createElement('div');
   details.className = 'exact-template-details';
@@ -99,7 +112,7 @@ function enhancePaper(paper: HTMLElement) {
     <p>Interaction: ${interaction}</p>
   `;
 
-  exact.append(logo, title, intro, details);
+  exact.append(top, intro, details);
   exact.append(
     editableField('Main topic(s)  (max. 200 words)', combine(whatHappened.value, workTask?.value), (value) => {
       nativeSet(whatHappened, value);
@@ -116,8 +129,8 @@ function enhancePaper(paper: HTMLElement) {
     }),
     editableField('Referrals', referrals?.value ?? '', (value) => {
       if (referrals) nativeSet(referrals, value);
-    }, true),
-    editableField('Safety concerns for sexual harm survivors and mental health', 'No safety concerns noted.', () => {}, true),
+    }),
+    staticSection('Safety concerns for sexual harm survivors and mental health', 'No safety concerns noted.'),
   );
 
   if (attendance) attendance.dataset.exactTemplateHidden = 'true';
