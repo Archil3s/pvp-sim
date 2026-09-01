@@ -2,8 +2,10 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
 import { ReportsHub } from './ReportsHub';
+import { SupportContextHub } from './SupportContextHub';
 import './styles.css';
 import './reportsHub.css';
+import './supportContextHub.css';
 
 declare const __BUILD_ID__: string;
 
@@ -39,5 +41,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
     <ReportsHub />
+    <SupportContextHub />
   </React.StrictMode>,
 );
