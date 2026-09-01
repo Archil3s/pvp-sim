@@ -1,111 +1,74 @@
 import JSZip from 'jszip';
-
-export type ExactSupportNoteDocxData = {
-  client: string;
-  date: string;
-  interaction: string;
-  mainTopics: string;
-  outcomes: string;
-  overallImpression: string;
-  nextActions: string;
-  referrals: string;
-  safetyConcerns?: string;
-};
-
-const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+import { goldStandardTemplateContent } from './supportNoteTemplate';
+import type { WorkEntry } from './model';
 
 function escapeXml(value: string) {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&apos;');
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
 }
 
-function runXml(value: string, bold = false) {
-  const lines = value.replaceAll('\r\n', '\n').split('\n');
-  const body = lines
-    .map((line, index) => `${index ? '<w:br/>' : ''}<w:t xml:space="preserve">${escapeXml(line)}</w:t>`)
-    .join('');
-  return `<w:r>${bold ? '<w:rPr><w:b/><w:bCs/></w:rPr>' : ''}${body}</w:r>`;
+function runXml(value: string) {
+  const lines = (value || ' ').replaceAll('\r\n', '\n').split('\n');
+  return `<w:r>${lines.map((line, index) => `${index ? '<w:br/>' : ''}<w:t xml:space="preserve">${escapeXml(line || ' ')}</w:t>`).join('')}</w:r>`;
 }
 
-function paragraphShell(paragraph: string) {
+function replaceTemplateParagraphText(paragraph: string, value: string) {
   const opening = paragraph.match(/^<w:p(?:\s[^>]*)?>/)?.[0] ?? '<w:p>';
   const props = paragraph.match(/<w:pPr[\s\S]*?<\/w:pPr>/)?.[0] ?? '';
-  return { opening, props };
+  return `${opening}${props}${runXml(value)}</w:p>`;
 }
 
-function replaceParagraph(paragraph: string, value: string, bold = false) {
-  const { opening, props } = paragraphShell(paragraph);
-  return `${opening}${props}${runXml(value, bold)}</w:p>`;
-}
+function populateTemplate(xml: string, entry: WorkEntry) {
+  const bodyOpen = '<w:body>';
+  const bodyClose = '</w:body>';
+  const bodyStart = xml.indexOf(bodyOpen);
+  const bodyEnd = xml.lastIndexOf(bodyClose);
+  if (bodyStart < 0 || bodyEnd <= bodyStart) throw new Error('Support-note template body is missing.');
 
-function replaceClientParagraph(paragraph: string, client: string) {
-  const { opening, props } = paragraphShell(paragraph);
-  return `${opening}${props}${runXml('Name of client: ', true)}${runXml(client)}</w:p>`;
-}
-
-function replaceDocumentParagraphs(xml: string, data: ExactSupportNoteDocxData) {
-  const bodyStart = xml.indexOf('<w:body>');
-  const bodyEnd = xml.lastIndexOf('</w:body>');
-  if (bodyStart < 0 || bodyEnd < 0) throw new Error('Support-note template body is missing.');
-
-  const prefix = xml.slice(0, bodyStart + '<w:body>'.length);
-  const body = xml.slice(bodyStart + '<w:body>'.length, bodyEnd);
-  const suffix = xml.slice(bodyEnd);
+  const prefix = xml.slice(0, bodyStart + bodyOpen.length);
+  const body = xml.slice(bodyStart + bodyOpen.length, bodyEnd);
   const paragraphs = [...body.matchAll(/<w:p(?:\s|>)[\s\S]*?<\/w:p>/g)].map((match) => match[0]);
-  if (paragraphs.length < 23) throw new Error('Support-note template layout has changed.');
+  const sectionProperties = [...body.matchAll(/<w:sectPr[\s\S]*?<\/w:sectPr>/g)].at(-1)?.[0] ?? '';
+  if (paragraphs.length < 19) throw new Error('Support-note template layout has changed.');
 
-  paragraphs[7] = replaceClientParagraph(paragraphs[7], data.client);
-  paragraphs[8] = replaceParagraph(paragraphs[8], `Date: ${data.date}`, true);
-  paragraphs[9] = replaceParagraph(paragraphs[9], `Interaction: ${data.interaction}`);
-  paragraphs[12] = replaceParagraph(paragraphs[12], data.mainTopics);
-  paragraphs[14] = replaceParagraph(paragraphs[14], data.outcomes);
-  paragraphs[16] = replaceParagraph(paragraphs[16], data.overallImpression);
-  paragraphs[18] = replaceParagraph(paragraphs[18], data.nextActions);
-  paragraphs[20] = replaceParagraph(paragraphs[20], data.referrals);
-  paragraphs[22] = replaceParagraph(
-    paragraphs[22],
-    data.safetyConcerns?.trim() || 'No safety concerns noted.',
-  );
+  const content = goldStandardTemplateContent(entry, entry.supportNotePersonName?.trim() || entry.client, entry.supportNoteBreakdown);
+  const populated = paragraphs.slice(0, 19);
+  populated[7] = replaceTemplateParagraphText(paragraphs[7], `Name of client. ${content.clientName}`);
+  populated[8] = replaceTemplateParagraphText(paragraphs[8], `Date: ${content.date}`);
+  populated[10] = replaceTemplateParagraphText(paragraphs[10], content.interactionDetails);
+  populated[12] = replaceTemplateParagraphText(paragraphs[12], content.mainTopics);
+  populated[14] = replaceTemplateParagraphText(paragraphs[14], content.outcomes);
+  populated[16] = replaceTemplateParagraphText(paragraphs[16], content.overallImpression);
+  populated[18] = replaceTemplateParagraphText(paragraphs[18], content.nextActions);
 
-  let cursor = 0;
-  let paragraphIndex = 0;
-  const rebuiltBody = body.replace(/<w:p(?:\s|>)[\s\S]*?<\/w:p>/g, () => paragraphs[paragraphIndex++]);
-  void cursor;
-  return `${prefix}${rebuiltBody}${suffix}`;
+  return `${prefix}${populated.join('')}${sectionProperties}${bodyClose}</w:document>`;
 }
 
 function safeFilePart(value: string) {
   return value.trim().replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'note';
 }
 
-export async function downloadExactSupportNoteDocx(data: ExactSupportNoteDocxData) {
+export async function buildSupportNoteDocx(entry: WorkEntry) {
   const response = await fetch('/support-note-template.docx', { cache: 'no-store' });
-  if (!response.ok) throw new Error('Exact support-note template could not be loaded.');
+  if (!response.ok) throw new Error('Gold-standard support-note template could not be loaded.');
 
-  const templateBytes = await response.arrayBuffer();
-  const zip = await JSZip.loadAsync(templateBytes);
+  const zip = await JSZip.loadAsync(await response.arrayBuffer());
   const documentFile = zip.file('word/document.xml');
-  if (!documentFile) throw new Error('Exact support-note template is missing document.xml.');
+  if (!documentFile) throw new Error('Gold-standard support-note template is missing document.xml.');
+  zip.file('word/document.xml', populateTemplate(await documentFile.async('string'), entry));
 
-  const xml = await documentFile.async('string');
-  zip.file('word/document.xml', replaceDocumentParagraphs(xml, data));
-
-  const blob = await zip.generateAsync({
+  return zip.generateAsync({
     type: 'blob',
     mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     compression: 'DEFLATE',
   });
+}
 
-  const datePart = data.date.split('/').reverse().join('-');
-  const fileName = `${safeFilePart(datePart)}_${safeFilePart(data.client)}.docx`;
+export async function downloadSupportNoteDocx(entry: WorkEntry) {
+  const blob = await buildSupportNoteDocx(entry);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = fileName;
+  anchor.download = `${safeFilePart(entry.date)}_${safeFilePart(entry.supportNotePersonName?.trim() || entry.client)}_support-note.docx`;
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
