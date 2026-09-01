@@ -1,11 +1,5 @@
-const exactInstruction =
-  'Date/time/length of interaction. Also record calls and texts, just time spent on each, no need for non important calls and texts. Record travel time.';
-
 function nativeSet(textarea: HTMLTextAreaElement, value: string) {
-  const setter = Object.getOwnPropertyDescriptor(
-    HTMLTextAreaElement.prototype,
-    'value',
-  )?.set;
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
   setter?.call(textarea, value);
   textarea.dispatchEvent(new Event('input', { bubbles: true }));
   textarea.dispatchEvent(new Event('change', { bubbles: true }));
@@ -18,37 +12,40 @@ function textAreaByLabel(root: Element, label: string): HTMLTextAreaElement | nu
 }
 
 function combine(...values: Array<string | undefined>) {
-  return values
-    .map((value) => value?.trim() ?? '')
-    .filter(Boolean)
-    .join('\n\n');
+  return values.map((value) => value?.trim() ?? '').filter(Boolean).join('\n\n');
 }
 
-function field(
+function editableField(
   heading: string,
-  limit: string,
   value: string,
   onCommit: (value: string) => void,
+  bold = false,
 ) {
   const section = document.createElement('section');
   section.className = 'exact-template-field';
-
   const title = document.createElement('div');
-  title.className = 'exact-template-field-title';
-  const h4 = document.createElement('h4');
-  h4.textContent = heading;
-  const small = document.createElement('small');
-  small.textContent = limit;
-  title.append(h4, small);
-
+  title.className = `exact-template-field-title${bold ? ' exact-template-field-title-bold' : ''}`;
+  title.textContent = heading;
   const textarea = document.createElement('textarea');
   textarea.value = value;
-  textarea.rows = heading === 'Main topic(s)' ? 7 : 5;
-  textarea.setAttribute('aria-label', `${heading} ${limit}`);
+  textarea.rows = heading.startsWith('Main topic') ? 7 : 5;
+  textarea.setAttribute('aria-label', heading);
   textarea.addEventListener('change', () => onCommit(textarea.value));
-
   section.append(title, textarea);
   return section;
+}
+
+function formatDate(value: string) {
+  const match = value.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
+  if (match) return `${match[1].padStart(2, '0')}/${match[2].padStart(2, '0')}/${match[3]}`;
+  const iso = value.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+  return value;
+}
+
+function interactionType(value: string) {
+  const clean = value.split('•')[0]?.trim() ?? value;
+  return clean.replace(/\s*[·|]\s*.*$/, '').trim();
 }
 
 function enhancePaper(paper: HTMLElement) {
@@ -72,71 +69,63 @@ function enhancePaper(paper: HTMLElement) {
   const meta = Array.from(paper.querySelectorAll('.gold-template-meta strong')).map(
     (item) => item.textContent?.trim() ?? '',
   );
-  const interaction = paper.querySelector('.gold-template-auto')?.textContent?.trim() ?? '';
+  const originalInteraction = paper.querySelector('.gold-template-auto')?.textContent?.trim() ?? '';
+  const client = meta[1] ?? '';
+  const date = formatDate(meta[2] ?? '');
+  const interaction = interactionType(originalInteraction);
 
   const exact = document.createElement('div');
   exact.className = 'exact-template-document';
 
-  const header = document.createElement('header');
-  header.className = 'exact-template-header';
-  header.innerHTML = `
-    <h3>Template for reporting of interactions with survivors.</h3>
-    <p class="exact-template-intro">This template is aimed at providing information in a format that meets the requirements of the Ministry of Social Development.</p>
-    <div class="exact-template-header-gap"></div>
-    <p><strong>Geographical area.</strong> Blenheim</p>
-    <p><strong>Name of client.</strong> ${meta[1] ?? ''}</p>
-    <p><strong>Date:</strong> ${meta[2] ?? ''}</p>
-    <p class="exact-template-instruction"><strong>${exactInstruction}</strong></p>
-    <p class="exact-template-interaction"></p>
+  const logo = document.createElement('img');
+  logo.className = 'exact-template-logo';
+  logo.src = '/support-note-header.png';
+  logo.alt = 'Male Room and Tautoko Tāne Male Survivors Aotearoa';
+
+  const title = document.createElement('h3');
+  title.className = 'exact-template-title';
+  title.textContent = 'Template for reporting of interactions with survivors.';
+
+  const intro = document.createElement('p');
+  intro.className = 'exact-template-intro';
+  intro.textContent = 'This template is aimed at providing information in a format that meets the requirements of the Ministry of Social Development.';
+
+  const details = document.createElement('div');
+  details.className = 'exact-template-details';
+  details.innerHTML = `
+    <p>Geographical area. Blenheim</p>
+    <p><strong>Name of client:</strong> ${client}</p>
+    <p><strong>Date: ${date}</strong></p>
+    <p>Interaction: ${interaction}</p>
   `;
-  const interactionLine = header.querySelector('.exact-template-interaction');
-  if (interactionLine) interactionLine.textContent = interaction;
 
-  exact.append(header);
-
+  exact.append(logo, title, intro, details);
   exact.append(
-    field(
-      'Main topic(s)',
-      '(max. 200 words)',
-      combine(whatHappened.value, workTask?.value),
-      (value) => {
-        nativeSet(whatHappened, value);
-        if (workTask) nativeSet(workTask, '');
-      },
-    ),
-    field('Outcome(s)', '(Max. 100 words)', outcome.value, (value) => {
-      nativeSet(outcome, value);
+    editableField('Main topic(s)  (max. 200 words)', combine(whatHappened.value, workTask?.value), (value) => {
+      nativeSet(whatHappened, value);
+      if (workTask) nativeSet(workTask, '');
     }),
-    field(
-      'Overall impression',
-      '(Max. 150 words)',
-      combine(supportGiven.value, issueProblem?.value),
-      (value) => {
-        nativeSet(supportGiven, value);
-        if (issueProblem) nativeSet(issueProblem, '');
-      },
-    ),
-    field(
-      'Next actions',
-      'Max. 150 words',
-      combine(nextStep.value, followUp?.value, referrals?.value),
-      (value) => {
-        nativeSet(nextStep, value);
-        if (followUp) nativeSet(followUp, '');
-        if (referrals) nativeSet(referrals, '');
-      },
-    ),
+    editableField('Outcome(s)  (Max. 100 words)', outcome.value, (value) => nativeSet(outcome, value)),
+    editableField('Overall impression (Max. 150 words)`', combine(supportGiven.value, issueProblem?.value), (value) => {
+      nativeSet(supportGiven, value);
+      if (issueProblem) nativeSet(issueProblem, '');
+    }),
+    editableField('Next actions  Max. 150 words)`', combine(nextStep.value, followUp?.value), (value) => {
+      nativeSet(nextStep, value);
+      if (followUp) nativeSet(followUp, '');
+    }),
+    editableField('Referrals', referrals?.value ?? '', (value) => {
+      if (referrals) nativeSet(referrals, value);
+    }, true),
+    editableField('Safety concerns for sexual harm survivors and mental health', 'No safety concerns noted.', () => {}, true),
   );
 
   if (attendance) attendance.dataset.exactTemplateHidden = 'true';
-
   paper.append(exact);
 }
 
 function enhanceAll() {
-  document
-    .querySelectorAll<HTMLElement>('.gold-template-paper')
-    .forEach(enhancePaper);
+  document.querySelectorAll<HTMLElement>('.gold-template-paper').forEach(enhancePaper);
 }
 
 let queued = false;
